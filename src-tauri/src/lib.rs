@@ -299,8 +299,8 @@ fn random_len(min: usize, max: usize) -> usize {
 fn serve_file(path: &str) -> Option<String> {
     let web_frontend_dist = std::env::current_dir().ok().and_then(|cwd| {
         let candidates = [
-            cwd.join("src/web-frontend/dist"),
-            cwd.join("../src/web-frontend/dist"),
+            cwd.join("web-frontend/dist"),
+            cwd.join("../web-frontend/dist"),
         ];
         candidates.into_iter().find(|pb| pb.exists())
     })?;
