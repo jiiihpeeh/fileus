@@ -1,0 +1,36 @@
+[package]
+name = "fileus"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "fileus_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rmp-serde = "1"
+rmp = "0.8"
+rcgen = "0.13"
+ring = "0.17"
+webpki-roots = "0.26"
+time = "0.3.47"
+sysinfo = "0.30"
+hostname = "0.3"
+dirs = "5"
+zip = "0.6"
+aes = "0.8"
+aes-gcm = "0.10"
+base64 = "0.22"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.28", features = ["process", "signal"] }
+

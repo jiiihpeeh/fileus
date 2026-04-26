@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+src-tauri/node_modules/
+
+# Build outputs
+dist/
+src/web-frontend/dist/
+src-tauri/target/
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Debug
+.tsbuildinfo
+
+# Certs (generated locally)
+*.pem
+*.crt
+*.key
