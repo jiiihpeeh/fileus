@@ -319,6 +319,20 @@ fn serve_file(path: &str) -> Option<String> {
 }
 
 fn handle_request(mut stream: TcpStream) {
+    if let Ok(addr) = stream.peer_addr() {
+        let ip = addr.ip();
+        let is_localhost = ip.is_loopback();
+        let is_192168 = match ip {
+            std::net::IpAddr::V4(v4) => v4.octets()[0] == 192 && v4.octets()[1] == 168,
+            _ => false,
+        };
+        if !is_localhost && !is_192168 {
+            let _ = stream.write_all(
+                b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            return;
+        }
+    }
     let mut buffer = [0; 8192];
     let n = match stream.read(&mut buffer) {
         Ok(n) if n > 0 => n,
@@ -416,7 +430,7 @@ fn handle_request(mut stream: TcpStream) {
     }
 
     let params = parse_query_params(query);
-    let mut response = String::new();
+    let response;
 
     if method == "OPTIONS" {
         response = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n".to_string();
@@ -1366,28 +1380,32 @@ fn handle_request(mut stream: TcpStream) {
     let _ = stream.flush();
 }
 
-fn spawn_http_server(port: u16) {
+fn spawn_http_server(port: u16) -> Result<(), String> {
     SERVER_PORT.store(port, Ordering::SeqCst);
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+        .map_err(|e| format!("Failed to bind to port {}: {}", port, e))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("Failed to set nonblocking: {}", e))?;
     SERVER_RUNNING.store(true, Ordering::SeqCst);
     thread::spawn(move || {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", port));
-        match listener {
-            Ok(l) => {
-                println!("Rust HTTP server listening on http://127.0.0.1:{}", port);
-                for stream in l.incoming() {
-                    if !SERVER_RUNNING.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    match stream {
-                        Ok(s) => handle_request(s),
-                        Err(e) => eprintln!("Connection failed: {}", e),
-                    }
-                }
-                println!("Rust HTTP server stopped");
+        println!("Rust HTTP server listening on http://127.0.0.1:{}", port);
+        loop {
+            if !SERVER_RUNNING.load(Ordering::SeqCst) {
+                break;
             }
-            Err(e) => eprintln!("Failed to bind to port {}: {}", port, e),
+            match listener.accept() {
+                Ok((s, _)) => handle_request(s),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => eprintln!("Connection failed: {}", e),
+            }
         }
+        println!("Rust HTTP server stopped");
     });
+    Ok(())
 }
 
 // ===== FILE BROWSER COMMANDS =====
@@ -1831,14 +1849,25 @@ fn start_http_server(port: u16) -> Result<(), String> {
     if SERVER_RUNNING.load(Ordering::SeqCst) {
         return Err("Server already running".to_string());
     }
-    spawn_http_server(port);
+    spawn_http_server(port)?;
     Ok(())
 }
 
 #[tauri::command]
-fn start_http_server_cmd(port: Option<u16>) -> Result<(), String> {
-    let port = port.unwrap_or_else(|| SERVER_PORT.load(Ordering::SeqCst));
-    start_http_server(port)
+fn toggle_http_server(port: Option<u16>) -> Result<String, String> {
+    if SERVER_RUNNING.load(Ordering::SeqCst) {
+        SERVER_RUNNING.store(false, Ordering::SeqCst);
+        Ok("Stopped".to_string())
+    } else {
+        let port = port.unwrap_or_else(|| SERVER_PORT.load(Ordering::SeqCst));
+        match spawn_http_server(port) {
+            Ok(()) => {
+                SERVER_PORT.store(port, Ordering::SeqCst);
+                Ok("Running".to_string())
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 #[tauri::command]
@@ -1931,7 +1960,7 @@ pub fn run() {
             greet_json,
             generate_tls_certificates,
             generate_local_certs,
-            start_http_server_cmd,
+            toggle_http_server,
             stop_http_server,
             is_server_running,
             set_server_port,

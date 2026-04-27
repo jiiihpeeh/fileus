@@ -83,23 +83,16 @@ function App() {
   }
 
   async function toggleServer() {
-    const running = await checkServer();
-    if (running) {
-      await invoke("stop_http_server");
-      setServerStatus("Stopped");
-    } else {
-      const port = customPort() ? parseInt(customPort()) : serverPort();
-      if (isNaN(port) || port < 1 || port > 65535) {
-        alert("Invalid port number (1-65535)");
-        return;
-      }
-      await invoke("start_http_server", { port });
-      await invoke("set_random_shared_alphanumeric_key");
-      await refreshPort();
-      await fetchSharedKey();
-      setTimeout(async () => {
-        await checkServer();
-      }, 500);
+    const port = customPort() ? parseInt(customPort()) : serverPort();
+    if (isNaN(port) || port < 1 || port > 65535) {
+      alert("Invalid port number (1-65535)");
+      return;
+    }
+    try {
+      const result = await invoke("toggle_http_server", { port }) as string;
+      setServerStatus(result);
+    } catch (err) {
+      alert(String(err));
     }
   }
 
@@ -155,9 +148,20 @@ function App() {
               style={{width: "150px", "margin-right": "0.5rem"}}
             />
             <button onClick={applyPort} style={{ "margin-right": "0.5rem" }}>Set Port</button>
-            <button onClick={toggleServer} style={{ "margin-top": "0.5rem" }}>
-              {serverStatus() === "Running" ? "Stop Server" : "Start Server"}
-            </button>
+            <div style={{ display: "flex", "align-items": "center", "justify-content": "center", gap: "12px" }}>
+            <span>Server</span>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                checked={serverStatus() === "Running"}
+                onChange={toggleServer}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+            <span style={{ color: serverStatus() === "Running" ? "#86efac" : "#f87171", "font-weight": "600" }}>
+              {serverStatus() === "Running" ? "ON" : "OFF"}
+            </span>
+          </div>
           </div>
         </div>
 
