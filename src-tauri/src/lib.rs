@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod crypto;
+mod utilities;
 
 use crypto::common::{
     decrypt_api_data, encrypt_api_binary_response, encrypt_api_binary_response_simple,
@@ -84,52 +85,6 @@ fn greet_json(name: &str) -> GreetResponse {
     }
 }
 
-fn determine_mime(path: &str) -> &'static str {
-    match path
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase()
-        .as_str()
-    {
-        "html" => "text/html",
-        "js" => "application/javascript",
-        "mjs" => "application/javascript",
-        "css" => "text/css",
-        "json" => "application/json",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "svg" => "image/svg+xml",
-        "ico" => "image/x-icon",
-        "woff2" => "font/woff2",
-        "wasm" => "application/wasm",
-        "txt" => "text/plain",
-        _ => "application/octet-stream",
-    }
-}
-
-fn serve_file(path: &str) -> Option<String> {
-    let web_frontend_dist = std::env::current_dir().ok().and_then(|cwd| {
-        let candidates = [
-            cwd.join("web-frontend/dist"),
-            cwd.join("../web-frontend/dist"),
-        ];
-        candidates.into_iter().find(|pb| pb.exists())
-    })?;
-
-    let fs_path = if path == "/" || path.is_empty() {
-        web_frontend_dist.join("index.html")
-    } else {
-        let safe_path = path.trim_start_matches('/');
-        if safe_path.contains("..") {
-            return None;
-        }
-        web_frontend_dist.join(safe_path)
-    };
-
-    fs::read_to_string(&fs_path).ok()
-}
-
 fn handle_request(mut stream: TcpStream) {
     if let Ok(addr) = stream.peer_addr() {
         let ip = addr.ip();
@@ -175,73 +130,7 @@ fn handle_request(mut stream: TcpStream) {
     let query = req_path.split('?').nth(1).unwrap_or("");
     let clean_path = req_path.split('?').next().unwrap_or("/");
 
-    fn parse_query_params(query: &str) -> std::collections::HashMap<String, String> {
-        let mut params = std::collections::HashMap::new();
-        for pair in query.split('&') {
-            if let Some((k, v)) = pair.split_once('=') {
-                params.insert(k.to_string(), urlencoding_decode(v));
-            }
-        }
-        params
-    }
-
-    fn urlencoding_decode(s: &str) -> String {
-        s.replace("+", " ")
-            .split('%')
-            .enumerate()
-            .map(|(i, part)| {
-                if i == 0 {
-                    part.to_string()
-                } else if part.len() >= 2 {
-                    let hex = &part[..2];
-                    let remainder = &part[2..];
-                    if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                        format!("{}{}", (byte as char).to_string(), remainder)
-                    } else {
-                        format!("%{}", part)
-                    }
-                } else {
-                    format!("%{}", part)
-                }
-            })
-            .collect()
-    }
-
-    fn json_response(data: &str, status: &str) -> String {
-        format!("HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}", status, data.len(), data)
-    }
-
-    fn error_response(msg: &str, status: &str) -> String {
-        let body = format!("{{\"error\":\"{}\"}}", msg);
-        format!("HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}", status, body.len(), body)
-    }
-
-    fn base64_encode(data: &[u8]) -> String {
-        const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut result = String::new();
-        for chunk in data.chunks(3) {
-            let b = match chunk.len() {
-                1 => [chunk[0], 0, 0],
-                2 => [chunk[0], chunk[1], 0],
-                _ => [chunk[0], chunk[1], chunk[2]],
-            };
-            result.push(CHARS[(b[0] >> 2) as usize] as char);
-            result.push(CHARS[((b[0] & 0x03) << 4 | b[1] >> 4) as usize] as char);
-            if chunk.len() > 1 {
-                result.push(CHARS[((b[1] & 0x0f) << 2 | b[2] >> 6) as usize] as char);
-            } else {
-                result.push('=');
-            }
-            if chunk.len() > 2 {
-                result.push(CHARS[(b[2] & 0x3f) as usize] as char);
-            } else {
-                result.push('=');
-            }
-        }
-        result
-    }
-
-    let params = parse_query_params(query);
+    let params = utilities::parse_query_params(query);
     let response;
 
     if method == "OPTIONS" {
@@ -250,11 +139,11 @@ fn handle_request(mut stream: TcpStream) {
         let ts = OffsetDateTime::now_utc().unix_timestamp();
         let body =
             serde_json::to_string(&serde_json::json!({"status": "ok", "timestamp": ts})).unwrap();
-        response = json_response(&body, "200");
+        response = utilities::json_response(&body, "200");
     } else if method == "POST" && clean_path == "/api/session/verify" {
         let key = SHARED_KEY.lock().unwrap();
         if key.is_empty() {
-            response = error_response("No shared key set", "400");
+            response = utilities::error_response("No shared key set", "400");
         } else {
             #[derive(Deserialize)]
             struct SessionPayload {
@@ -268,7 +157,7 @@ fn handle_request(mut stream: TcpStream) {
                     Ok(bytes) => {
                         const NONCE_SIZE: usize = 12;
                         if bytes.len() < NONCE_SIZE + 16 {
-                            response = error_response("Invalid ciphertext", "400");
+                            response = utilities::error_response("Invalid ciphertext", "400");
                         } else {
                             use aes_gcm::{
                                 aead::{Aead, KeyInit},
@@ -287,30 +176,30 @@ fn handle_request(mut stream: TcpStream) {
                                         Ok(vec) if vec.len() >= 2 => {
                                             let new_key = vec[1].clone();
                                             *SESSION_NEW_KEY.lock().unwrap() = new_key;
-                                            response = json_response(r#"{"valid":true}"#, "200");
+                                            response = utilities::json_response(r#"{"valid":true}"#, "200");
                                         }
                                         _ => {
-                                            response = error_response("Invalid payload", "400");
+                                            response = utilities::error_response("Invalid payload", "400");
                                         }
                                     }
                                 }
                                 Err(_) => {
                                     eprintln!("DEBUG: Decryption failed. Expected key: {}", key);
-                                    response = error_response("Decryption failed", "400");
+                                    response = utilities::error_response("Decryption failed", "400");
                                 }
                             }
                         }
                     }
-                    Err(_) => response = error_response("Invalid base64", "400"),
+                    Err(_) => response = utilities::error_response("Invalid base64", "400"),
                 }
             } else {
-                response = error_response("Invalid request body", "400");
+                response = utilities::error_response("Invalid request body", "400");
             }
         }
     } else if method == "POST" && clean_path == "/api/session/decrypt" {
         let new_key = SESSION_NEW_KEY.lock().unwrap();
         if new_key.is_empty() {
-            response = error_response("No session key", "400");
+            response = utilities::error_response("No session key", "400");
         } else {
             #[derive(Deserialize)]
             struct DecryptPayload {
@@ -324,7 +213,7 @@ fn handle_request(mut stream: TcpStream) {
                     Ok(bytes) => {
                         const NONCE_SIZE: usize = 12;
                         if bytes.len() < NONCE_SIZE + 16 {
-                            response = error_response("Invalid ciphertext", "400");
+                            response = utilities::error_response("Invalid ciphertext", "400");
                         } else {
                             use aes_gcm::{
                                 aead::{Aead, KeyInit},
@@ -345,21 +234,21 @@ fn handle_request(mut stream: TcpStream) {
                                                 &serde_json::json!({"payload": vec[1]}),
                                             )
                                             .unwrap();
-                                            response = json_response(&body, "200");
+                                            response = utilities::json_response(&body, "200");
                                         }
                                         _ => {
-                                            response = error_response("Invalid payload", "400");
+                                            response = utilities::error_response("Invalid payload", "400");
                                         }
                                     }
                                 }
-                                Err(_) => response = error_response("Decryption failed", "400"),
+                                Err(_) => response = utilities::error_response("Decryption failed", "400"),
                             }
                         }
                     }
-                    Err(_) => response = error_response("Invalid base64", "400"),
+                    Err(_) => response = utilities::error_response("Invalid base64", "400"),
                 }
             } else {
-                response = error_response("Invalid request body", "400");
+                response = utilities::error_response("Invalid request body", "400");
             }
         }
     } else if method == "POST" && clean_path == "/api/system/home" {
@@ -374,15 +263,15 @@ fn handle_request(mut stream: TcpStream) {
                     .unwrap_or_else(|| "/".to_string());
                 let body_str = serde_json::to_string(&serde_json::json!({"path": home})).unwrap();
                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                    response = json_response(&encrypted, "200");
+                    response = utilities::json_response(&encrypted, "200");
                 } else {
-                    response = error_response("Encryption failed", "500");
+                    response = utilities::error_response("Encryption failed", "500");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/system/drives" {
         #[derive(Deserialize)]
@@ -401,15 +290,15 @@ fn handle_request(mut stream: TcpStream) {
                 }
                 let body_str = serde_json::to_string(&items).unwrap();
                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                    response = json_response(&encrypted, "200");
+                    response = utilities::json_response(&encrypted, "200");
                 } else {
-                    response = error_response("Encryption failed", "500");
+                    response = utilities::error_response("Encryption failed", "500");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/system/processes" {
         #[derive(Deserialize)]
@@ -437,15 +326,15 @@ fn handle_request(mut stream: TcpStream) {
                 });
                 let body_str = serde_json::to_string(&processes).unwrap();
                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                    response = json_response(&encrypted, "200");
+                    response = utilities::json_response(&encrypted, "200");
                 } else {
-                    response = error_response("Encryption failed", "500");
+                    response = utilities::error_response("Encryption failed", "500");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/list" {
         #[derive(Deserialize)]
@@ -457,7 +346,7 @@ fn handle_request(mut stream: TcpStream) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&decrypted) {
                     let dir = parsed.get("dir").and_then(|v| v.as_str()).unwrap_or("/");
                     if dir.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         match fs::read_dir(Path::new(dir)) {
                             Ok(entries) => {
@@ -496,25 +385,25 @@ fn handle_request(mut stream: TcpStream) {
                                 });
                                 let body_str = serde_json::to_string(&items).unwrap();
                                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                                    response = json_response(&encrypted, "200");
+                                    response = utilities::json_response(&encrypted, "200");
                                 } else {
-                                    response = error_response("Encryption failed", "500");
+                                    response = utilities::error_response("Encryption failed", "500");
                                 }
                             }
                             Err(e) => {
                                 response =
-                                    error_response(&format!("Cannot read directory: {}", e), "500");
+                                    utilities::error_response(&format!("Cannot read directory: {}", e), "500");
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/info" {
         #[derive(Deserialize)]
@@ -526,7 +415,7 @@ fn handle_request(mut stream: TcpStream) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&decrypted) {
                     let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
                     if file_path.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         match fs::metadata(file_path) {
                             Ok(metadata) => {
@@ -544,24 +433,24 @@ fn handle_request(mut stream: TcpStream) {
                                 let is_dir = metadata.is_dir();
                                 let body_str = serde_json::to_string(&serde_json::json!({"name": name, "path": file_path, "is_dir": is_dir, "size": size, "modified": modified})).unwrap();
                                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                                    response = json_response(&encrypted, "200");
+                                    response = utilities::json_response(&encrypted, "200");
                                 } else {
-                                    response = error_response("Encryption failed", "500");
+                                    response = utilities::error_response("Encryption failed", "500");
                                 }
                             }
                             Err(e) => {
-                                response = error_response(&format!("Cannot get info: {}", e), "500")
+                                response = utilities::error_response(&format!("Cannot get info: {}", e), "500")
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/search" {
         #[derive(Deserialize)]
@@ -574,7 +463,7 @@ fn handle_request(mut stream: TcpStream) {
                     let dir = parsed.get("dir").and_then(|v| v.as_str()).unwrap_or("/");
                     let pattern = parsed.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
                     if dir.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         let mut results = Vec::new();
                         let pattern_lower = pattern.to_lowercase();
@@ -610,19 +499,19 @@ fn handle_request(mut stream: TcpStream) {
                         walk_dir(Path::new(dir), &pattern_lower, &mut results);
                         let body_str = serde_json::to_string(&results).unwrap();
                         if let Some(encrypted) = encrypt_api_response(&body_str) {
-                            response = json_response(&encrypted, "200");
+                            response = utilities::json_response(&encrypted, "200");
                         } else {
-                            response = error_response("Encryption failed", "500");
+                            response = utilities::error_response("Encryption failed", "500");
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/read" {
         #[derive(Deserialize)]
@@ -634,7 +523,7 @@ fn handle_request(mut stream: TcpStream) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&decrypted) {
                     let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
                     if file_path.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         match fs::read(file_path) {
                             Ok(bytes) => {
@@ -657,31 +546,31 @@ fn handle_request(mut stream: TcpStream) {
                                 } else {
                                     "application/octet-stream"
                                 };
-                                let b64 = base64_encode(&bytes);
+                                let b64 = utilities::base64_encode(&bytes);
                                 let body_str = serde_json::to_string(
                                     &serde_json::json!({"content": b64, "mime": mime, "binary": true}),
                                 )
                                 .unwrap();
                                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                                    response = json_response(&encrypted, "200");
+                                    response = utilities::json_response(&encrypted, "200");
                                 } else {
-                                    response = error_response("Encryption failed", "500");
+                                    response = utilities::error_response("Encryption failed", "500");
                                 }
                             }
                             Err(e) => {
                                 response =
-                                    error_response(&format!("Cannot read file: {}", e), "500")
+                                    utilities::error_response(&format!("Cannot read file: {}", e), "500")
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/binary" {
         #[derive(Deserialize)]
@@ -693,7 +582,7 @@ fn handle_request(mut stream: TcpStream) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&decrypted) {
                     let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
                     if file_path.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         match fs::read(file_path) {
                             Ok(bytes) => {
@@ -709,23 +598,23 @@ fn handle_request(mut stream: TcpStream) {
                                     let _ = stream.flush();
                                     return;
                                 } else {
-                                    response = error_response("Encryption failed", "500");
+                                    response = utilities::error_response("Encryption failed", "500");
                                 }
                             }
                             Err(e) => {
                                 response =
-                                    error_response(&format!("Cannot read file: {}", e), "500")
+                                    utilities::error_response(&format!("Cannot read file: {}", e), "500")
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/delete" {
         #[derive(Deserialize)]
@@ -737,7 +626,7 @@ fn handle_request(mut stream: TcpStream) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&decrypted) {
                     let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
                     if file_path.contains("..") || file_path == "/" {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         let p = Path::new(file_path);
                         let result = if p.is_dir() {
@@ -749,24 +638,24 @@ fn handle_request(mut stream: TcpStream) {
                             Ok(_) => {
                                 let body_str = "{\"success\":true}".to_string();
                                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                                    response = json_response(&encrypted, "200");
+                                    response = utilities::json_response(&encrypted, "200");
                                 } else {
-                                    response = error_response("Encryption failed", "500");
+                                    response = utilities::error_response("Encryption failed", "500");
                                 }
                             }
                             Err(e) => {
-                                response = error_response(&format!("Cannot delete: {}", e), "500")
+                                response = utilities::error_response(&format!("Cannot delete: {}", e), "500")
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/write" {
         #[derive(Deserialize)]
@@ -779,31 +668,31 @@ fn handle_request(mut stream: TcpStream) {
                     let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
                     let content = parsed.get("content").and_then(|v| v.as_str()).unwrap_or("");
                     if file_path.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         match fs::write(file_path, content) {
                             Ok(_) => {
                                 let body_str = "{\"success\":true}".to_string();
                                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                                    response = json_response(&encrypted, "200");
+                                    response = utilities::json_response(&encrypted, "200");
                                 } else {
-                                    response = error_response("Encryption failed", "500");
+                                    response = utilities::error_response("Encryption failed", "500");
                                 }
                             }
                             Err(e) => {
                                 response =
-                                    error_response(&format!("Cannot write file: {}", e), "500")
+                                    utilities::error_response(&format!("Cannot write file: {}", e), "500")
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/create-dir" {
         #[derive(Deserialize)]
@@ -815,19 +704,19 @@ fn handle_request(mut stream: TcpStream) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&decrypted) {
                     let dir_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
                     if dir_path.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         match fs::create_dir_all(dir_path) {
                             Ok(_) => {
                                 let body_str = "{\"success\":true}".to_string();
                                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                                    response = json_response(&encrypted, "200");
+                                    response = utilities::json_response(&encrypted, "200");
                                 } else {
-                                    response = error_response("Encryption failed", "500");
+                                    response = utilities::error_response("Encryption failed", "500");
                                 }
                             }
                             Err(e) => {
-                                response = error_response(
+                                response = utilities::error_response(
                                     &format!("Cannot create directory: {}", e),
                                     "500",
                                 )
@@ -835,13 +724,13 @@ fn handle_request(mut stream: TcpStream) {
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/rename" {
         #[derive(Deserialize)]
@@ -860,30 +749,30 @@ fn handle_request(mut stream: TcpStream) {
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     if old_path.contains("..") || new_path.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         match fs::rename(old_path, new_path) {
                             Ok(_) => {
                                 let body_str = "{\"success\":true}".to_string();
                                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                                    response = json_response(&encrypted, "200");
+                                    response = utilities::json_response(&encrypted, "200");
                                 } else {
-                                    response = error_response("Encryption failed", "500");
+                                    response = utilities::error_response("Encryption failed", "500");
                                 }
                             }
                             Err(e) => {
-                                response = error_response(&format!("Cannot rename: {}", e), "500")
+                                response = utilities::error_response(&format!("Cannot rename: {}", e), "500")
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/copy" {
         #[derive(Deserialize)]
@@ -896,30 +785,30 @@ fn handle_request(mut stream: TcpStream) {
                     let source = parsed.get("source").and_then(|v| v.as_str()).unwrap_or("");
                     let dest = parsed.get("dest").and_then(|v| v.as_str()).unwrap_or("");
                     if source.contains("..") || dest.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         match fs::copy(source, dest) {
                             Ok(_) => {
                                 let body_str = "{\"success\":true}".to_string();
                                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                                    response = json_response(&encrypted, "200");
+                                    response = utilities::json_response(&encrypted, "200");
                                 } else {
-                                    response = error_response("Encryption failed", "500");
+                                    response = utilities::error_response("Encryption failed", "500");
                                 }
                             }
                             Err(e) => {
-                                response = error_response(&format!("Cannot copy: {}", e), "500")
+                                response = utilities::error_response(&format!("Cannot copy: {}", e), "500")
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/move" {
         #[derive(Deserialize)]
@@ -932,30 +821,30 @@ fn handle_request(mut stream: TcpStream) {
                     let source = parsed.get("source").and_then(|v| v.as_str()).unwrap_or("");
                     let dest = parsed.get("dest").and_then(|v| v.as_str()).unwrap_or("");
                     if source.contains("..") || dest.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         match fs::rename(source, dest) {
                             Ok(_) => {
                                 let body_str = "{\"success\":true}".to_string();
                                 if let Some(encrypted) = encrypt_api_response(&body_str) {
-                                    response = json_response(&encrypted, "200");
+                                    response = utilities::json_response(&encrypted, "200");
                                 } else {
-                                    response = error_response("Encryption failed", "500");
+                                    response = utilities::error_response("Encryption failed", "500");
                                 }
                             }
                             Err(e) => {
-                                response = error_response(&format!("Cannot move: {}", e), "500")
+                                response = utilities::error_response(&format!("Cannot move: {}", e), "500")
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/files/download" {
         #[derive(Deserialize)]
@@ -967,11 +856,11 @@ fn handle_request(mut stream: TcpStream) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&decrypted) {
                     let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
                     if file_path.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         let p = Path::new(file_path);
                         if !p.exists() {
-                            response = error_response("File not found", "404");
+                            response = utilities::error_response("File not found", "404");
                         } else if p.is_dir() {
                             use std::io::Write;
                             let mut buffer = Vec::new();
@@ -1063,19 +952,19 @@ fn handle_request(mut stream: TcpStream) {
                                 }
                                 Err(e) => {
                                     response =
-                                        error_response(&format!("Cannot read file: {}", e), "500")
+                                        utilities::error_response(&format!("Cannot read file: {}", e), "500")
                                 }
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "POST" && clean_path == "/api/fileupload/binary" {
         #[derive(Deserialize)]
@@ -1096,11 +985,11 @@ fn handle_request(mut stream: TcpStream) {
                         .and_then(|v| v.as_u64())
                         .unwrap_or(1) as usize;
                     if file_path.contains("..") {
-                        response = error_response("Forbidden", "403");
+                        response = utilities::error_response("Forbidden", "403");
                     } else {
                         let p = Path::new(file_path);
                         if !p.exists() || p.is_dir() {
-                            response = error_response("File not found", "404");
+                            response = utilities::error_response("File not found", "404");
                         } else {
                             match fs::read(file_path) {
                                 Ok(bytes) => {
@@ -1108,7 +997,7 @@ fn handle_request(mut stream: TcpStream) {
                                     let start = chunk_index * CHUNK_SIZE;
                                     if start >= file_size {
                                         response =
-                                            error_response("Chunk index out of range", "400");
+                                            utilities::error_response("Chunk index out of range", "400");
                                     } else {
                                         let end = std::cmp::min(start + CHUNK_SIZE, file_size);
                                         let chunk_data = bytes[start..end].to_vec();
@@ -1138,25 +1027,25 @@ fn handle_request(mut stream: TcpStream) {
                                             let _ = stream.flush();
                                             return;
                                         } else {
-                                            response = error_response("Encryption failed", "500");
+                                            response = utilities::error_response("Encryption failed", "500");
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     response =
-                                        error_response(&format!("Cannot read file: {}", e), "500")
+                                        utilities::error_response(&format!("Cannot read file: {}", e), "500")
                                 }
                             }
                         }
                     }
                 } else {
-                    response = error_response("Invalid decrypted data", "400");
+                    response = utilities::error_response("Invalid decrypted data", "400");
                 }
             } else {
-                response = error_response("Decryption failed", "400");
+                response = utilities::error_response("Decryption failed", "400");
             }
         } else {
-            response = error_response("Invalid request", "400");
+            response = utilities::error_response("Invalid request", "400");
         }
     } else if method == "GET" && req_path.starts_with("/api/greet") {
         let name = params.get("name").map(|s| s.as_str()).unwrap_or("World");
@@ -1164,18 +1053,18 @@ fn handle_request(mut stream: TcpStream) {
             &serde_json::json!({"message": format!("Hello, {}! (from Rust HTTP API)", name)}),
         )
         .unwrap();
-        response = json_response(&body, "200");
+        response = utilities::json_response(&body, "200");
     } else if method == "GET" {
-        if let Some(content) = serve_file(req_path) {
+        if let Some(content) = utilities::serve_file(req_path) {
             let fs_name = if req_path == "/" || req_path.ends_with('/') {
                 "index.html"
             } else {
                 req_path
             };
-            let mime = determine_mime(fs_name);
+            let mime = utilities::determine_mime(fs_name);
             response = format!("HTTP/1.1 200 OK\r\nContent-Type: {}; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", mime, content.len(), content);
         } else {
-            if let Some(content) = serve_file("/") {
+            if let Some(content) = utilities::serve_file("/") {
                 response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", content.len(), content);
             } else {
                 let body = "<h1>404 Not Found</h1>";
