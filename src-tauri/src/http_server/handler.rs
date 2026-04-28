@@ -134,6 +134,14 @@ pub fn handle_request(mut stream: TcpStream) {
                 .unwrap();
                 response = utilities::json_response(&body, "200");
             }
+            #[cfg(all(feature = "expose_shared_key_api", debug_assertions))]
+            ("GET", "/api/shared-key") => {
+                let body = serde_json::to_string(
+                    &serde_json::json!({"shared_key": crate::shared::SHARED_KEY.lock().unwrap().clone()}),
+                )
+                .unwrap();
+                response = utilities::json_response(&body, "200");
+            }
             ("GET", _) => {
                 if let Some(content) = utilities::serve_file(req_path) {
                     let fs_name = if req_path == "/" || req_path.ends_with('/') {

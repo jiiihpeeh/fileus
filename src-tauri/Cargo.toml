@@ -34,3 +34,6 @@ base64 = "0.22"
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.28", features = ["process", "signal"] }
 
+[features]
+expose_shared_key_api = []
+
