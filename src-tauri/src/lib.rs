@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod crypto;
 mod http_server;
+mod shared;
 mod utilities;
 
 // crypto imports used in other modules

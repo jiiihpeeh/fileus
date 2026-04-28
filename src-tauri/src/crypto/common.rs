@@ -4,15 +4,9 @@ use aes_gcm::{
 };
 use ring::digest::{digest, SHA256};
 use ring::rand::{SecureRandom, SystemRandom};
-use std::sync::atomic::{AtomicBool, AtomicU16};
-use std::sync::Mutex;
 
+use crate::shared::{SESSION_NEW_KEY, SHARED_KEY};
 use serde_json;
-
-pub static SHARED_KEY: Mutex<String> = Mutex::new(String::new());
-pub static SESSION_NEW_KEY: Mutex<String> = Mutex::new(String::new());
-pub static SERVER_RUNNING: AtomicBool = AtomicBool::new(false);
-pub static SERVER_PORT: AtomicU16 = AtomicU16::new(8080);
 
 pub fn decrypt_api_data(data: &str) -> Option<String> {
     let new_key = SESSION_NEW_KEY.lock().unwrap();

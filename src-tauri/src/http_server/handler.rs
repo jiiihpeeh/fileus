@@ -1,7 +1,8 @@
 use crate::crypto::common::{
     decrypt_api_data, encrypt_api_binary_response, encrypt_api_binary_response_simple,
-    encrypt_api_response, SESSION_NEW_KEY, SHARED_KEY,
+    encrypt_api_response,
 };
+use crate::shared::{SESSION_NEW_KEY, SHARED_KEY};
 use crate::utilities;
 use ring::digest::{digest, SHA256};
 use std::fs;

@@ -1,4 +1,4 @@
-use crate::crypto::common::{SERVER_PORT, SERVER_RUNNING};
+use crate::shared::{SERVER_PORT, SERVER_RUNNING};
 use std::net::TcpListener;
 use std::sync::atomic::Ordering;
 use std::thread;
