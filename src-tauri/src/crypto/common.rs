@@ -122,6 +122,24 @@ pub fn encrypt_api_binary_response(metadata_json: &str, binary_data: &[u8]) -> O
     Some(combined)
 }
 
+pub fn decrypt_aes_gcm(key: &str, data: &str) -> Result<Vec<String>, String> {
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)
+        .map_err(|_| "Invalid base64".to_string())?;
+    const NONCE_SIZE: usize = 12;
+    if bytes.len() < NONCE_SIZE + 16 {
+        return Err("Invalid ciphertext".to_string());
+    }
+    let nonce = Nonce::from_slice(&bytes[..NONCE_SIZE]);
+    let ciphertext = &bytes[NONCE_SIZE..];
+    let key_hash = digest(&SHA256, key.as_bytes());
+    let cipher = Aes256Gcm::new_from_slice(key_hash.as_ref())
+        .map_err(|_| "Failed to initialize cipher".to_string())?;
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| "Decryption failed".to_string())?;
+    rmp_serde::from_slice::<Vec<String>>(&plaintext).map_err(|_| "Invalid payload".to_string())
+}
+
 pub fn generate_random_string(len: usize) -> String {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut result = String::with_capacity(len);
