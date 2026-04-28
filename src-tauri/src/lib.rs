@@ -1,33 +1,24 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use aes_gcm::{
-    aead::{Aead, KeyInit},
-    Aes256Gcm, Nonce,
+mod crypto;
+
+use crypto::common::{
+    decrypt_api_data, encrypt_api_binary_response, encrypt_api_binary_response_simple,
+    encrypt_api_response, SERVER_PORT, SERVER_RUNNING, SESSION_NEW_KEY, SHARED_KEY,
 };
-use rcgen::{Certificate, CertificateParams, DistinguishedName, IsCa, KeyPair};
+// rcgen::KeyPair used in crypto module
 use ring::digest::{digest, SHA256};
-use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
-use std::sync::Mutex;
+use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::thread;
 use time::OffsetDateTime;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct GreetResponse {
     message: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct TlsCertificates {
-    ca_cert: String,
-    ca_key: String,
-    domain: String,
-    domain_cert: String,
-    domain_key: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -56,11 +47,6 @@ struct ProcessItem {
     cpu: f32,
     memory: u64,
 }
-
-static SERVER_RUNNING: AtomicBool = AtomicBool::new(false);
-static SERVER_PORT: AtomicU16 = AtomicU16::new(8080);
-static SHARED_KEY: Mutex<String> = Mutex::new(String::new());
-static SESSION_NEW_KEY: Mutex<String> = Mutex::new(String::new());
 
 #[tauri::command]
 fn get_binary_file(path: String) -> Result<Vec<u8>, String> {
@@ -98,46 +84,6 @@ fn greet_json(name: &str) -> GreetResponse {
     }
 }
 
-fn generate_ca() -> Result<(Certificate, String, String), String> {
-    let mut params = CertificateParams::default();
-    params.is_ca = IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, "Local Rust CA");
-    params.not_before = OffsetDateTime::now_utc();
-    params.not_after = params.not_before + time::Duration::days(365);
-
-    let key_pair = KeyPair::generate().map_err(|e| e.to_string())?;
-    let ca_cert = params.self_signed(&key_pair).map_err(|e| e.to_string())?;
-    let ca_pem = ca_cert.pem();
-    let ca_key = key_pair.serialize_pem();
-
-    Ok((ca_cert, ca_pem, ca_key))
-}
-
-fn generate_domain_cert(
-    ca_cert: &Certificate,
-    ca_key: &KeyPair,
-    domain: &str,
-) -> Result<(String, String), String> {
-    let mut params = CertificateParams::new(vec![domain.to_string()]).map_err(|e| e.to_string())?;
-    params.distinguished_name = DistinguishedName::new();
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, domain);
-    params.not_before = OffsetDateTime::now_utc();
-    params.not_after = params.not_before + time::Duration::days(365);
-
-    let key_pair = KeyPair::generate().map_err(|e| e.to_string())?;
-    let cert = params
-        .signed_by(&key_pair, ca_cert, ca_key)
-        .map_err(|e| e.to_string())?;
-    let pem = cert.pem();
-    let key = key_pair.serialize_pem();
-
-    Ok((pem, key))
-}
-
 fn determine_mime(path: &str) -> &'static str {
     match path
         .rsplit('.')
@@ -160,140 +106,6 @@ fn determine_mime(path: &str) -> &'static str {
         "txt" => "text/plain",
         _ => "application/octet-stream",
     }
-}
-
-fn decrypt_api_data(data: &str) -> Option<String> {
-    let new_key = SESSION_NEW_KEY.lock().unwrap();
-    if new_key.is_empty() {
-        return None;
-    }
-    let key = &*new_key;
-
-    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).ok()?;
-    const NONCE_SIZE: usize = 12;
-    if bytes.len() < NONCE_SIZE + 16 {
-        return None;
-    }
-
-    let nonce = Nonce::from_slice(&bytes[..NONCE_SIZE]);
-    let ciphertext = &bytes[NONCE_SIZE..];
-    let key_hash = digest(&SHA256, key.as_bytes());
-    let cipher = Aes256Gcm::new_from_slice(key_hash.as_ref()).ok()?;
-
-    let plaintext = cipher.decrypt(nonce, ciphertext).ok()?;
-
-    let decoded: Vec<String> = rmp_serde::from_slice(&plaintext).ok()?;
-    if decoded.len() >= 2 {
-        Some(decoded[1].clone())
-    } else {
-        None
-    }
-}
-
-fn encrypt_api_response(response_data: &str) -> Option<String> {
-    let new_key = SESSION_NEW_KEY.lock().unwrap();
-    if new_key.is_empty() {
-        return None;
-    }
-    let key = &*new_key;
-
-    let key_hash = digest(&SHA256, key.as_bytes());
-
-    let cipher = Aes256Gcm::new_from_slice(key_hash.as_ref()).ok()?;
-
-    let rng = SystemRandom::new();
-    let mut nonce_bytes = [0u8; 12];
-    rng.fill(&mut nonce_bytes).ok()?;
-
-    let salt = generate_random_string(random_len(49, 87));
-
-    let payload_buf = rmp_serde::to_vec(&(salt, response_data)).ok()?;
-
-    let nonce_iv = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce_iv, payload_buf.as_ref()).ok()?;
-
-    let mut combined = Vec::with_capacity(12 + ciphertext.len());
-    combined.extend_from_slice(&nonce_bytes);
-    combined.extend_from_slice(&ciphertext);
-
-    let encrypted = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &combined);
-
-    let response_json = serde_json::to_string(&serde_json::json!({"data": encrypted})).unwrap();
-    Some(response_json)
-}
-
-fn encrypt_api_binary_response_simple(binary_data: &[u8]) -> Option<Vec<u8>> {
-    let new_key = SESSION_NEW_KEY.lock().unwrap();
-    if new_key.is_empty() {
-        return None;
-    }
-    let key = &*new_key;
-
-    let key_hash = digest(&SHA256, key.as_bytes());
-
-    let cipher = Aes256Gcm::new_from_slice(key_hash.as_ref()).ok()?;
-
-    let rng = SystemRandom::new();
-    let mut nonce_bytes = [0u8; 12];
-    rng.fill(&mut nonce_bytes).ok()?;
-
-    let nonce_iv = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce_iv, binary_data).ok()?;
-
-    let mut combined = Vec::with_capacity(12 + ciphertext.len());
-    combined.extend_from_slice(&nonce_bytes);
-    combined.extend_from_slice(&ciphertext);
-
-    Some(combined)
-}
-
-fn encrypt_api_binary_response(metadata_json: &str, binary_data: &[u8]) -> Option<Vec<u8>> {
-    let new_key = SESSION_NEW_KEY.lock().unwrap();
-    if new_key.is_empty() {
-        return None;
-    }
-    let key = &*new_key;
-
-    let key_hash = digest(&SHA256, key.as_bytes());
-
-    let cipher = Aes256Gcm::new_from_slice(key_hash.as_ref()).ok()?;
-
-    let rng = SystemRandom::new();
-    let mut nonce_bytes = [0u8; 12];
-    rng.fill(&mut nonce_bytes).ok()?;
-
-    let salt = generate_random_string(random_len(49, 87));
-
-    let payload_buf = rmp_serde::to_vec(&(salt, metadata_json, binary_data)).ok()?;
-
-    let nonce_iv = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce_iv, payload_buf.as_ref()).ok()?;
-
-    let mut combined = Vec::with_capacity(12 + ciphertext.len());
-    combined.extend_from_slice(&nonce_bytes);
-    combined.extend_from_slice(&ciphertext);
-
-    Some(combined)
-}
-
-fn generate_random_string(len: usize) -> String {
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let mut result = String::with_capacity(len);
-    let rng = SystemRandom::new();
-    for _ in 0..len {
-        let mut buf = [0u8; 1];
-        rng.fill(&mut buf).unwrap();
-        let idx = buf[0] as usize % CHARSET.len();
-        result.push(CHARSET[idx] as char);
-    }
-    result
-}
-
-fn random_len(min: usize, max: usize) -> usize {
-    let rng = SystemRandom::new();
-    let mut buf = [0u8; 1];
-    rng.fill(&mut buf).unwrap();
-    min + (buf[0] as usize % (max - min + 1))
 }
 
 fn serve_file(path: &str) -> Option<String> {
@@ -1801,50 +1613,6 @@ fn kill_process(pid: u32) -> Result<(), String> {
 
 // ===== TLS & SERVER COMMANDS =====
 
-#[tauri::command]
-fn generate_local_certs(domain: Option<String>) -> Result<TlsCertificates, String> {
-    let domain = domain.unwrap_or_else(|| "localhost".to_string());
-    let (ca_cert, ca_pem, ca_key) = generate_ca()?;
-    let key_pair = KeyPair::from_pem(&ca_key).map_err(|e| e.to_string())?;
-    let (domain_cert, domain_key) = generate_domain_cert(&ca_cert, &key_pair, &domain)?;
-
-    let mut cert_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    cert_dir.push("certs");
-    fs::create_dir_all(&cert_dir).map_err(|e| format!("Failed to create certs dir: {}", e))?;
-
-    fs::write(cert_dir.join("ca_cert.pem"), &ca_pem)
-        .map_err(|e| format!("Failed to write ca_cert.pem: {}", e))?;
-    fs::write(cert_dir.join("ca_key.pem"), &ca_key)
-        .map_err(|e| format!("Failed to write ca_key.pem: {}", e))?;
-    fs::write(cert_dir.join(format!("{}.pem", domain)), &domain_cert)
-        .map_err(|e| format!("Failed to write domain cert: {}", e))?;
-    fs::write(cert_dir.join(format!("{}-key.pem", domain)), &domain_key)
-        .map_err(|e| format!("Failed to write domain key: {}", e))?;
-
-    Ok(TlsCertificates {
-        ca_cert: ca_pem,
-        ca_key,
-        domain,
-        domain_cert,
-        domain_key,
-    })
-}
-
-#[tauri::command]
-fn generate_tls_certificates(domain: Option<String>) -> Result<TlsCertificates, String> {
-    let domain = domain.unwrap_or_else(|| "localhost".to_string());
-    let (ca_cert, ca_pem, ca_key) = generate_ca()?;
-    let key_pair = KeyPair::from_pem(&ca_key).map_err(|e| e.to_string())?;
-    let (domain_cert, domain_key) = generate_domain_cert(&ca_cert, &key_pair, &domain)?;
-    Ok(TlsCertificates {
-        ca_cert: ca_pem,
-        ca_key,
-        domain,
-        domain_cert,
-        domain_key,
-    })
-}
-
 fn start_http_server(port: u16) -> Result<(), String> {
     if SERVER_RUNNING.load(Ordering::SeqCst) {
         return Err("Server already running".to_string());
@@ -1900,55 +1668,9 @@ fn set_server_port(port: u16) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-fn set_random_shared_alphanumeric_key() -> String {
-    const CHARS: &[u8] = b"ABCDEFGHJKLMNOPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz0123456789";
-    let mut key = String::with_capacity(10);
-    let rng = SystemRandom::new();
-    for _ in 0..10 {
-        let idx = {
-            let mut buf = [0u8; 1];
-            rng.fill(&mut buf).unwrap();
-            buf[0] as usize % CHARS.len()
-        };
-        key.push(CHARS[idx] as char);
-    }
-    eprintln!("DEBUG get_shared_key: accessed, value = {}", key);
-    *SHARED_KEY.lock().unwrap() = key.clone();
-    eprintln!(
-        "DEBUG SHARED_KEY now contains: {}",
-        *SHARED_KEY.lock().unwrap()
-    );
-    key
-}
-
-#[tauri::command]
-fn get_shared_key() -> Option<String> {
-    let key = SHARED_KEY.lock().unwrap();
-    let key_str: &str = key.as_ref();
-    eprintln!("DEBUG get_shared_key: accessed, value = {}", key_str);
-    if key.is_empty() {
-        None
-    } else {
-        Some(key.clone())
-    }
-}
-
-#[tauri::command]
-fn get_session_new_key() -> Option<String> {
-    let key = SESSION_NEW_KEY.lock().unwrap();
-    let key_str: &str = key.as_ref();
-    eprintln!("DEBUG get_session_new_key: accessed, value = {}", key_str);
-    if key.is_empty() {
-        None
-    } else {
-        Some(key.clone())
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if let Err(e) = generate_local_certs(None) {
+    if let Err(e) = crypto::certificates::generate_local_certs(None) {
         eprintln!("Warning: Failed to auto-generate TLS certificates: {}", e);
     }
 
@@ -1958,8 +1680,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet_json,
-            generate_tls_certificates,
-            generate_local_certs,
+            crypto::certificates::generate_tls_certificates,
+            crypto::certificates::generate_local_certs,
             toggle_http_server,
             stop_http_server,
             is_server_running,
@@ -1991,9 +1713,9 @@ pub fn run() {
             // Binary file
             get_binary_file,
             get_binary_mime,
-            get_shared_key,
-            set_random_shared_alphanumeric_key,
-            get_session_new_key,
+            crypto::common::get_shared_key,
+            crypto::common::set_random_shared_alphanumeric_key,
+            crypto::common::get_session_new_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
