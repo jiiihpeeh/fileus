@@ -13,6 +13,17 @@ struct ApiPayload {
     data: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+struct FileEntry {
+    is_dir: bool,
+    modified: Option<u64>,
+    name: String,
+    path: String,
+    size: u64,
+    owner: Option<String>,
+    permissions: Option<String>,
+}
+
 pub fn validate_path(path: &str) -> Result<(), ApiError> {
     if path.contains("..") {
         Err(ApiError::Forbidden)
@@ -21,10 +32,10 @@ pub fn validate_path(path: &str) -> Result<(), ApiError> {
     }
 }
 
-pub fn search_files(dir: &Path, pattern: &str) -> Vec<serde_json::Value> {
+pub fn search_files(dir: &Path, pattern: &str) -> Vec<FileEntry> {
     let mut results = Vec::new();
     let pattern_lower = pattern.to_lowercase();
-    fn walk_dir(dir: &Path, pat: &str, results: &mut Vec<serde_json::Value>) {
+    fn walk_dir(dir: &Path, pat: &str, results: &mut Vec<FileEntry>) {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -36,15 +47,21 @@ pub fn search_files(dir: &Path, pattern: &str) -> Vec<serde_json::Value> {
                             .clone()
                             .and_then(|m| m.modified().ok())
                             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs() as i64);
+                            .map(|d| d.as_secs());
                         let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-                        results.push(serde_json::json!({
-                            "name": name,
-                            "path": path.to_string_lossy().to_string(),
-                            "is_dir": is_dir,
-                            "size": size,
-                            "modified": modified
-                        }));
+                        let (owner, permissions) = metadata
+                            .as_ref()
+                            .map(|m| get_owner_and_permissions(m))
+                            .unwrap_or((None, None));
+                        results.push(FileEntry {
+                            name: name.to_string(),
+                            path: path.to_string_lossy().to_string(),
+                            is_dir,
+                            size,
+                            modified,
+                            owner,
+                            permissions,
+                        });
                     }
                     if path.is_dir() {
                         walk_dir(&path, pat, results);
@@ -87,7 +104,7 @@ pub fn handle_files_list(body: &str) -> String {
         let dir = parsed.get("dir").and_then(|v| v.as_str()).unwrap_or("/");
         validate_path(dir).map_err(ApiError::from)?;
         let entries = fs::read_dir(Path::new(dir)).map_err(|_| ApiError::IoError)?;
-        let mut items: Vec<serde_json::Value> = entries
+        let mut items: Vec<FileEntry> = entries
             .flatten()
             .filter_map(|entry: std::fs::DirEntry| {
                 let path = entry.path();
@@ -100,38 +117,25 @@ pub fn handle_files_list(body: &str) -> String {
                     .and_then(|t: std::time::SystemTime| {
                         t.duration_since(std::time::UNIX_EPOCH).ok()
                     })
-                    .map(|d: std::time::Duration| d.as_secs() as i64);
+                    .map(|d: std::time::Duration| d.as_secs());
                 let is_dir = metadata.is_dir();
-                Some(serde_json::json!({
-                    "name": name,
-                    "path": path.to_string_lossy().to_string(),
-                    "is_dir": is_dir,
-                    "size": size,
-                    "modified": modified
-                }))
+                let (owner, permissions) = get_owner_and_permissions(&metadata);
+                Some(FileEntry {
+                    name,
+                    path: path.to_string_lossy().to_string(),
+                    is_dir,
+                    size,
+                    modified,
+                    owner,
+                    permissions,
+                })
             })
             .collect();
-        items.sort_by(|a: &serde_json::Value, b: &serde_json::Value| {
-            let a_dir = a
-                .get("is_dir")
-                .and_then(|v: &serde_json::Value| v.as_bool())
-                .unwrap_or(false);
-            let b_dir = b
-                .get("is_dir")
-                .and_then(|v: &serde_json::Value| v.as_bool())
-                .unwrap_or(false);
-            if a_dir != b_dir {
-                return b_dir.cmp(&a_dir);
+        items.sort_by(|a: &FileEntry, b: &FileEntry| {
+            if a.is_dir != b.is_dir {
+                return b.is_dir.cmp(&a.is_dir);
             }
-            let a_name = a
-                .get("name")
-                .and_then(|v: &serde_json::Value| v.as_str())
-                .unwrap_or("");
-            let b_name = b
-                .get("name")
-                .and_then(|v: &serde_json::Value| v.as_str())
-                .unwrap_or("");
-            a_name.to_lowercase().cmp(&b_name.to_lowercase())
+            a.name.to_lowercase().cmp(&b.name.to_lowercase())
         });
         serde_json::to_string(&items)
             .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
@@ -153,13 +157,38 @@ pub fn handle_files_info(body: &str) -> String {
             .modified()
             .ok()
             .and_then(|t: std::time::SystemTime| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d: std::time::Duration| d.as_secs() as i64);
+            .map(|d: std::time::Duration| d.as_secs());
         let is_dir = metadata.is_dir();
-        serde_json::to_string(&serde_json::json!({
-            "name": name, "path": file_path, "is_dir": is_dir, "size": size, "modified": modified
-        }))
-        .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
+        let (owner, permissions) = get_owner_and_permissions(&metadata);
+        let entry = FileEntry {
+            name,
+            path: file_path.to_string(),
+            is_dir,
+            size,
+            modified,
+            owner,
+            permissions,
+        };
+        serde_json::to_string(&entry)
+            .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
+}
+
+fn get_owner_and_permissions(metadata: &fs::Metadata) -> (Option<String>, Option<String>) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let uid = metadata.uid();
+        let gid = metadata.gid();
+        let mode = metadata.mode();
+        let permissions = Some(format!("{:o}", mode & 0o777));
+        let owner = Some(format!("{}:{}", uid, gid));
+        (owner, permissions)
+    }
+    #[cfg(not(unix))]
+    {
+        (None, None)
+    }
 }
 
 pub fn handle_files_search(body: &str) -> String {
