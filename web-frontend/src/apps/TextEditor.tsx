@@ -1,8 +1,9 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, Show, onMount, onCleanup } from "solid-js";
 import { FolderOpen, Save, FileText } from "lucide-solid";
 import { apiRead, apiWrite } from "../api";
 import { FileDialog, SaveDialog } from "../components/Dialogs";
 import { notificationStore } from "../notificationStore";
+import type { EditorInstance } from "./editorCore";
 import "./TextEditor.css";
 
 interface TextEditorProps {
@@ -11,17 +12,39 @@ interface TextEditorProps {
 
 export function TextEditor(_props: TextEditorProps) {
   const [path, setPath] = createSignal("");
-  const [content, setContent] = createSignal("");
   const [saved, setSaved] = createSignal(true);
   const [showOpenDialog, setShowOpenDialog] = createSignal(false);
   const [showSaveDialog, setShowSaveDialog] = createSignal(false);
+  const [charCount, setCharCount] = createSignal(0);
+  const [lineCount, setLineCount] = createSignal(1);
+  const [loading, setLoading] = createSignal(true);
+  let editor: EditorInstance | null = null;
+  let module: typeof import("./editorCore") | null = null;
+  let containerRef: HTMLDivElement | undefined;
+
+  onMount(async () => {
+    module = await import("./editorCore");
+    editor = await module.createEditor(containerRef!, "", "", {
+      onDirty: () => setSaved(false),
+      onStats: (chars, lines) => { setCharCount(chars); setLineCount(lines); },
+    });
+    setLoading(false);
+  });
+
+  onCleanup(() => {
+    editor?.destroy();
+  });
 
   async function openFileCallback(filePath: string | null) {
     if (!filePath) return;
     try {
       const r = await apiRead(filePath);
       setPath(filePath);
-      setContent(r.content || "");
+      editor?.destroy();
+      editor = await module!.createEditor(containerRef!, r.content || "", filePath, {
+        onDirty: () => setSaved(false),
+        onStats: (chars, lines) => { setCharCount(chars); setLineCount(lines); },
+      });
       setSaved(true);
       setShowOpenDialog(false);
     } catch (err) { showNotification(`Error: ${err}`); }
@@ -31,7 +54,11 @@ export function TextEditor(_props: TextEditorProps) {
     try {
       await apiWrite(filePath, fileContent);
       setPath(filePath);
-      setContent(fileContent);
+      editor?.destroy();
+      editor = await module!.createEditor(containerRef!, fileContent, filePath, {
+        onDirty: () => setSaved(false),
+        onStats: (chars, lines) => { setCharCount(chars); setLineCount(lines); },
+      });
       setSaved(true);
       setShowSaveDialog(false);
       showNotification("Saved!");
@@ -41,8 +68,9 @@ export function TextEditor(_props: TextEditorProps) {
   async function handleSave() {
     const p = path();
     if (!p) { setShowSaveDialog(true); return; }
+    const content = editor?.getContent() || "";
     try {
-      await apiWrite(p, content());
+      await apiWrite(p, content);
       setSaved(true);
       showNotification("Saved!");
     } catch (err) { showNotification(`Error: ${err}`); }
@@ -73,17 +101,14 @@ export function TextEditor(_props: TextEditorProps) {
           </Show>
         </div>
       </div>
-      <div class="editor-container">
-        <textarea
-          class="editor-textarea"
-          value={content()}
-          onInput={(e) => { setContent((e.target as HTMLTextAreaElement).value); setSaved(false); }}
-          placeholder="Open a file or start typing..."
-        />
+      <div class="editor-container" ref={containerRef!}>
+        <Show when={loading()}>
+          <div class="editor-loading">Loading editor...</div>
+        </Show>
       </div>
       <div class="editor-footer">
-        <span>Chars: {content().length}</span>
-        <span style="margin-left: 12px;">Lines: {content().split('\n').length}</span>
+        <span>Chars: {charCount()}</span>
+        <span style="margin-left: 12px;">Lines: {lineCount()}</span>
       </div>
     </div>
   );

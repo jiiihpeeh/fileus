@@ -39,6 +39,18 @@ pub fn handle_request(mut stream: TcpStream) {
         ("", "", "")
     };
 
+    let mut accept_encoding = "";
+    for line in &lines[1..] {
+        let l = line.trim();
+        if let Some(rest) = l
+            .strip_prefix("Accept-Encoding:")
+            .or_else(|| l.strip_prefix("accept-encoding:"))
+        {
+            accept_encoding = rest.trim();
+            break;
+        }
+    }
+
     let req_path: &str = path;
     let body_start = request.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
     let body = if body_start < n {
@@ -145,16 +157,22 @@ pub fn handle_request(mut stream: TcpStream) {
                 response = utilities::msgpack_response(&body, "200");
             }
             ("GET", _) => {
-                if let Some(content) = utilities::serve_file(req_path) {
-                    let fs_name = if req_path == "/" || req_path.ends_with('/') {
-                        "index.html"
+                if let Some((data, mime, encoding)) =
+                    utilities::serve_file(req_path, accept_encoding)
+                {
+                    if let Some(enc) = encoding {
+                        response = responses::ok_compressed(&data, mime, enc);
                     } else {
-                        req_path
-                    };
-                    let mime = utilities::determine_mime(fs_name);
-                    response = responses::ok(&content, &mime).into_bytes();
-                } else if let Some(content) = utilities::serve_file("/") {
-                    response = responses::ok_html(&content).into_bytes();
+                        response = responses::ok_binary_with_body(&data, mime);
+                    }
+                } else if let Some((data, mime, encoding)) =
+                    utilities::serve_file("/", accept_encoding)
+                {
+                    if let Some(enc) = encoding {
+                        response = responses::ok_compressed(&data, mime, enc);
+                    } else {
+                        response = responses::ok_binary_with_body(&data, mime);
+                    }
                 } else {
                     response = responses::not_found().into_bytes();
                 }

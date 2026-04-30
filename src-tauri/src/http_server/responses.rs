@@ -1,12 +1,3 @@
-pub fn ok(content: &str, content_type: &str) -> String {
-    format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: {}; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        content_type,
-        content.len(),
-        content
-    )
-}
-
 pub fn ok_binary_with_body(content: &[u8], content_type: &str) -> Vec<u8> {
     let header = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
@@ -18,17 +9,21 @@ pub fn ok_binary_with_body(content: &[u8], content_type: &str) -> Vec<u8> {
     response
 }
 
-pub fn ok_html(content: &str) -> String {
-    format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        content.len(),
-        content
-    )
-}
-
 pub fn ok_octet_stream(content: &[u8]) -> Vec<u8> {
     let header = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+        content.len()
+    );
+    let mut response = header.into_bytes();
+    response.extend(content);
+    response
+}
+
+pub fn ok_compressed(content: &[u8], content_type: &str, content_encoding: &str) -> Vec<u8> {
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Encoding: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+        content_type,
+        content_encoding,
         content.len()
     );
     let mut response = header.into_bytes();

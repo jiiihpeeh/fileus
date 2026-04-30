@@ -21,20 +21,26 @@
 .editor-container {
   min-height: 0;
   position: relative;
+  overflow: hidden;
 }
 
-.editor-textarea {
-  width: 100%;
+.editor-container .cm-editor {
   height: 100%;
-  padding: 16px;
-  background: #0a0a0f;
-  border: none;
-  color: var(--text-primary);
+}
+
+.editor-container .cm-scroller {
+  overflow: auto;
   font-family: var(--mono);
   font-size: 14px;
-  line-height: 1.5;
-  resize: none;
-  outline: none;
+}
+
+.editor-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
 .editor-footer {

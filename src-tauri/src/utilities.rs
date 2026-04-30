@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::PathBuf;
 
 pub fn determine_mime(path: &str) -> &'static str {
     match path
@@ -24,26 +25,77 @@ pub fn determine_mime(path: &str) -> &'static str {
     }
 }
 
-pub fn serve_file(path: &str) -> Option<String> {
-    let web_frontend_dist = std::env::current_dir().ok().and_then(|cwd| {
-        let candidates = [
-            cwd.join("web-frontend/dist"),
-            cwd.join("../web-frontend/dist"),
-        ];
-        candidates.into_iter().find(|pb| pb.exists())
-    })?;
+fn find_dist_dir() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let candidates = [
+        cwd.join("web-frontend/dist"),
+        cwd.join("../web-frontend/dist"),
+    ];
+    candidates.into_iter().find(|pb| pb.exists())
+}
+
+pub fn get_preferred_encoding(accept_encoding: &str) -> &'static str {
+    if accept_encoding.is_empty() {
+        return "";
+    }
+    let mut has_br = false;
+    let mut has_gzip = false;
+    for part in accept_encoding.split(',') {
+        let enc = part.trim().split(';').next().unwrap_or("").trim();
+        match enc {
+            "br" => has_br = true,
+            "gzip" | "deflate" => has_gzip = true,
+            "*" => {
+                if !has_br && !has_gzip {
+                    has_br = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    if has_br {
+        "br"
+    } else if has_gzip {
+        "gzip"
+    } else {
+        ""
+    }
+}
+
+pub fn serve_file(
+    path: &str,
+    accept_encoding: &str,
+) -> Option<(Vec<u8>, &'static str, Option<&'static str>)> {
+    let dist_dir = find_dist_dir()?;
 
     let fs_path = if path == "/" || path.is_empty() {
-        web_frontend_dist.join("index.html")
+        dist_dir.join("index.html")
     } else {
         let safe_path = path.trim_start_matches('/');
         if safe_path.contains("..") {
             return None;
         }
-        web_frontend_dist.join(safe_path)
+        dist_dir.join(safe_path)
     };
 
-    fs::read_to_string(&fs_path).ok()
+    let encoding = get_preferred_encoding(accept_encoding);
+
+    if !encoding.is_empty() {
+        let ext = match encoding {
+            "br" => ".br",
+            "gzip" => ".gz",
+            _ => "",
+        };
+        let compressed_path = format!("{}{}", fs_path.to_string_lossy(), ext);
+        if let Ok(data) = fs::read(&compressed_path) {
+            let mime = determine_mime(fs_path.to_str().unwrap_or(""));
+            return Some((data, mime, Some(encoding)));
+        }
+    }
+
+    let data = fs::read(&fs_path).ok()?;
+    let mime = determine_mime(fs_path.to_str().unwrap_or(""));
+    Some((data, mime, None))
 }
 
 pub fn parse_query_params(query: &str) -> std::collections::HashMap<String, String> {

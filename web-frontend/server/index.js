@@ -1,7 +1,3 @@
-/**
- * Fileus Web Frontend Server
- * Pure Bun/SolidJS HTTP server with file operations
- */
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -28,6 +24,13 @@ const MIME = {
   '.woff2': 'font/woff2',
   '.wasm': 'application/wasm',
 };
+
+function acceptEncoding(req) {
+  const ae = req.headers['accept-encoding'] || '';
+  if (ae.includes('br')) return 'br';
+  if (ae.includes('gzip')) return 'gzip';
+  return '';
+}
 
 function sendJson(res, status, data) {
   res.statusCode = status;
@@ -266,18 +269,62 @@ async function handleApi(req, res, pathname, reqUrl) {
 }
 
 function serveFile(req, res, filepath) {
-  fs.readFile(filepath, (err, data) => {
-    if (err) {
-      res.statusCode = 404;
-      res.end('Not found');
-      return;
-    }
-    const ext = path.extname(filepath);
-    const mime = MIME[ext] || 'application/octet-stream';
-    res.setHeader('Content-Type', mime);
-    res.setHeader('Cache-Control', 'no-cache');
-    res.end(data);
-  });
+  const enc = acceptEncoding(req);
+  const ext = path.extname(filepath);
+  const mime = MIME[ext] || 'application/octet-stream';
+
+  if (enc === 'br') {
+    const brPath = filepath + '.br';
+    fs.stat(brPath, (err) => {
+      if (!err) {
+        fs.readFile(brPath, (err, data) => {
+          if (!err) {
+            res.setHeader('Content-Type', mime);
+            res.setHeader('Content-Encoding', 'br');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.end(data);
+            return;
+          }
+          fallback();
+        });
+      } else {
+        fallback();
+      }
+    });
+  } else if (enc === 'gzip') {
+    const gzPath = filepath + '.gz';
+    fs.stat(gzPath, (err) => {
+      if (!err) {
+        fs.readFile(gzPath, (err, data) => {
+          if (!err) {
+            res.setHeader('Content-Type', mime);
+            res.setHeader('Content-Encoding', 'gzip');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.end(data);
+            return;
+          }
+          fallback();
+        });
+      } else {
+        fallback();
+      }
+    });
+  } else {
+    fallback();
+  }
+
+  function fallback() {
+    fs.readFile(filepath, (err, data) => {
+      if (err) {
+        res.statusCode = 404;
+        res.end('Not found');
+        return;
+      }
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Cache-Control', 'no-cache');
+      res.end(data);
+    });
+  }
 }
 
 function createAppServer() {
