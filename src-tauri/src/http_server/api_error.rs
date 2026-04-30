@@ -26,7 +26,7 @@ impl From<ApiError> for String {
 }
 
 impl ApiError {
-    pub fn to_response(&self, code: &str) -> String {
+    pub fn to_response(&self, code: &str) -> Vec<u8> {
         let err: ApiError = self.clone();
         let msg: String = err.into();
         utilities::error_response(&msg, code)

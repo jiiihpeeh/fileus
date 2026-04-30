@@ -7,14 +7,6 @@ pub fn ok(content: &str, content_type: &str) -> String {
     )
 }
 
-pub fn ok_binary(content: &[u8], content_type: &str) -> String {
-    format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
-        content_type,
-        content.len()
-    )
-}
-
 pub fn ok_binary_with_body(content: &[u8], content_type: &str) -> Vec<u8> {
     let header = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",

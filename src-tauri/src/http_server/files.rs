@@ -1,16 +1,31 @@
 use crate::crypto::common::{
-    decrypt_api_data, encrypt_api_binary_response_simple, encrypt_api_response,
+    decrypt_api_data_raw, encrypt_api_binary_response_simple, encrypt_api_response_raw,
 };
 use crate::http_server::api_error::ApiError;
 use crate::http_server::responses;
 use crate::utilities;
+use rmpv::Value;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-#[derive(serde::Deserialize)]
-struct ApiPayload {
-    data: String,
+// Helper trait to add .get() method to rmpv::Value
+pub trait ValueExt {
+    fn get(&self, key: &str) -> Option<&Value>;
+}
+
+impl ValueExt for Value {
+    fn get(&self, key: &str) -> Option<&Value> {
+        self.as_map().and_then(|m| {
+            m.iter().find_map(|(k, v)| {
+                if k.as_str() == Some(key) {
+                    Some(v)
+                } else {
+                    None
+                }
+            })
+        })
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -99,7 +114,7 @@ pub fn add_folder_to_zip(
     }
 }
 
-pub fn handle_files_list(body: &str) -> String {
+pub fn handle_files_list(body: &[u8]) -> Vec<u8> {
     handle_encrypted_api(body, |parsed| {
         let dir = parsed.get("dir").and_then(|v| v.as_str()).unwrap_or("/");
         validate_path(dir).map_err(ApiError::from)?;
@@ -137,12 +152,12 @@ pub fn handle_files_list(body: &str) -> String {
             }
             a.name.to_lowercase().cmp(&b.name.to_lowercase())
         });
-        serde_json::to_string(&items)
+        rmp_serde::to_vec(&items)
             .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
 
-pub fn handle_files_info(body: &str) -> String {
+pub fn handle_files_info(body: &[u8]) -> Vec<u8> {
     handle_encrypted_api(body, |parsed| {
         let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
         validate_path(file_path).map_err(ApiError::from)?;
@@ -169,7 +184,7 @@ pub fn handle_files_info(body: &str) -> String {
             owner,
             permissions,
         };
-        serde_json::to_string(&entry)
+        rmp_serde::to_vec(&entry)
             .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
@@ -191,33 +206,44 @@ fn get_owner_and_permissions(metadata: &fs::Metadata) -> (Option<String>, Option
     }
 }
 
-pub fn handle_files_search(body: &str) -> String {
+pub fn handle_files_search(body: &[u8]) -> Vec<u8> {
     handle_encrypted_api(body, |parsed| {
         let dir = parsed.get("dir").and_then(|v| v.as_str()).unwrap_or("/");
         let pattern = parsed.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
         validate_path(dir).map_err(ApiError::from)?;
         let results = search_files(Path::new(dir), pattern);
-        serde_json::to_string(&results)
+        rmp_serde::to_vec(&results)
             .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
 
-pub fn handle_files_read(body: &str) -> String {
+pub fn handle_files_read(body: &[u8]) -> Vec<u8> {
     handle_encrypted_api(body, |parsed| {
         let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
         validate_path(file_path).map_err(ApiError::from)?;
         let bytes = fs::read(file_path).map_err(|_| ApiError::IoError)?;
         let mime = utilities::determine_mime(file_path);
         let b64 = utilities::base64_encode(&bytes);
-        serde_json::to_string(&serde_json::json!({"content": b64, "mime": mime, "binary": true}))
+        let response = Value::Map(vec![
+            (Value::String("content".into()), Value::String(b64.into())),
+            (Value::String("mime".into()), Value::String(mime.into())),
+            (Value::String("binary".into()), Value::Boolean(true)),
+        ]);
+        rmp_serde::to_vec(&response)
             .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
 
-pub fn handle_files_binary(body: &str, stream: &mut std::net::TcpStream) -> Option<String> {
-    let payload = serde_json::from_str::<ApiPayload>(body).ok()?;
-    let decrypted = decrypt_api_data(&payload.data)?;
-    let parsed = serde_json::from_str::<serde_json::Value>(&decrypted).ok()?;
+pub fn handle_files_binary(body: &[u8], stream: &mut std::net::TcpStream) -> Option<Vec<u8>> {
+    // Parse MessagePack body: {"data": <binary>}
+    let payload: Value = rmp_serde::from_slice(body).ok()?;
+    let data = payload.get("data")?.as_array()?;
+    let encrypted_bytes: Vec<u8> = data
+        .iter()
+        .filter_map(|v| v.as_u64().map(|n| n as u8))
+        .collect();
+    let decrypted = decrypt_api_data_raw(&encrypted_bytes)?;
+    let parsed: Value = rmp_serde::from_slice(&decrypted).ok()?;
 
     let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
     if file_path.contains("..") {
@@ -233,7 +259,7 @@ pub fn handle_files_binary(body: &str, stream: &mut std::net::TcpStream) -> Opti
     None
 }
 
-pub fn handle_files_delete(body: &str) -> String {
+pub fn handle_files_delete(body: &[u8]) -> Vec<u8> {
     handle_encrypted_api(body, |parsed| {
         let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
         validate_path(file_path).map_err(ApiError::from)?;
@@ -247,30 +273,45 @@ pub fn handle_files_delete(body: &str) -> String {
             fs::remove_file(p)
         };
         result.map_err(|_| ApiError::IoError)?;
-        Ok(r#"{"success":true}"#.to_string())
+        let response = Value::Map(vec![(
+            Value::String("success".into()),
+            Value::Boolean(true),
+        )]);
+        rmp_serde::to_vec(&response)
+            .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
 
-pub fn handle_files_write(body: &str) -> String {
+pub fn handle_files_write(body: &[u8]) -> Vec<u8> {
     handle_encrypted_api(body, |parsed| {
         let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
         let content = parsed.get("content").and_then(|v| v.as_str()).unwrap_or("");
         validate_path(file_path).map_err(ApiError::from)?;
         fs::write(file_path, content).map_err(|_| ApiError::IoError)?;
-        Ok(r#"{"success":true}"#.to_string())
+        let response = Value::Map(vec![(
+            Value::String("success".into()),
+            Value::Boolean(true),
+        )]);
+        rmp_serde::to_vec(&response)
+            .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
 
-pub fn handle_files_create_dir(body: &str) -> String {
+pub fn handle_files_create_dir(body: &[u8]) -> Vec<u8> {
     handle_encrypted_api(body, |parsed| {
         let dir_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
         validate_path(dir_path).map_err(ApiError::from)?;
         fs::create_dir_all(dir_path).map_err(|_| ApiError::IoError)?;
-        Ok(r#"{"success":true}"#.to_string())
+        let response = Value::Map(vec![(
+            Value::String("success".into()),
+            Value::Boolean(true),
+        )]);
+        rmp_serde::to_vec(&response)
+            .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
 
-pub fn handle_files_rename(body: &str) -> String {
+pub fn handle_files_rename(body: &[u8]) -> Vec<u8> {
     handle_encrypted_api(body, |parsed| {
         let old_path = parsed
             .get("old_path")
@@ -283,36 +324,57 @@ pub fn handle_files_rename(body: &str) -> String {
         validate_path(old_path).map_err(ApiError::from)?;
         validate_path(new_path).map_err(ApiError::from)?;
         fs::rename(old_path, new_path).map_err(|_| ApiError::IoError)?;
-        Ok(r#"{"success":true}"#.to_string())
+        let response = Value::Map(vec![(
+            Value::String("success".into()),
+            Value::Boolean(true),
+        )]);
+        rmp_serde::to_vec(&response)
+            .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
 
-pub fn handle_files_copy(body: &str) -> String {
+pub fn handle_files_copy(body: &[u8]) -> Vec<u8> {
     handle_encrypted_api(body, |parsed| {
         let source = parsed.get("source").and_then(|v| v.as_str()).unwrap_or("");
         let dest = parsed.get("dest").and_then(|v| v.as_str()).unwrap_or("");
         validate_path(source).map_err(ApiError::from)?;
         validate_path(dest).map_err(ApiError::from)?;
         fs::copy(source, dest).map_err(|_| ApiError::IoError)?;
-        Ok(r#"{"success":true}"#.to_string())
+        let response = Value::Map(vec![(
+            Value::String("success".into()),
+            Value::Boolean(true),
+        )]);
+        rmp_serde::to_vec(&response)
+            .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
 
-pub fn handle_files_move(body: &str) -> String {
+pub fn handle_files_move(body: &[u8]) -> Vec<u8> {
     handle_encrypted_api(body, |parsed| {
         let source = parsed.get("source").and_then(|v| v.as_str()).unwrap_or("");
         let dest = parsed.get("dest").and_then(|v| v.as_str()).unwrap_or("");
         validate_path(source).map_err(ApiError::from)?;
         validate_path(dest).map_err(ApiError::from)?;
         fs::rename(source, dest).map_err(|_| ApiError::IoError)?;
-        Ok(r#"{"success":true}"#.to_string())
+        let response = Value::Map(vec![(
+            Value::String("success".into()),
+            Value::Boolean(true),
+        )]);
+        rmp_serde::to_vec(&response)
+            .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
 
-pub fn handle_files_download(body: &str, stream: &mut std::net::TcpStream) -> Option<String> {
-    let payload = serde_json::from_str::<ApiPayload>(body).ok()?;
-    let decrypted = decrypt_api_data(&payload.data)?;
-    let parsed = serde_json::from_str::<serde_json::Value>(&decrypted).ok()?;
+pub fn handle_files_download(body: &[u8], stream: &mut std::net::TcpStream) -> Option<Vec<u8>> {
+    // Parse MessagePack body: {"data": <binary>}
+    let payload: Value = rmp_serde::from_slice(body).ok()?;
+    let data = payload.get("data")?.as_array()?;
+    let encrypted_bytes: Vec<u8> = data
+        .iter()
+        .filter_map(|v| v.as_u64().map(|n| n as u8))
+        .collect();
+    let decrypted = decrypt_api_data_raw(&encrypted_bytes)?;
+    let parsed: Value = rmp_serde::from_slice(&decrypted).ok()?;
 
     let file_path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
     if file_path.contains("..") {
@@ -348,26 +410,38 @@ pub fn handle_files_download(body: &str, stream: &mut std::net::TcpStream) -> Op
     None
 }
 
-pub fn handle_encrypted_api<F>(body: &str, handler: F) -> String
+pub fn handle_encrypted_api<F>(body: &[u8], handler: F) -> Vec<u8>
 where
-    F: FnOnce(serde_json::Value) -> Result<String, ApiError>,
+    F: FnOnce(Value) -> Result<Vec<u8>, ApiError>,
 {
-    let payload = match serde_json::from_str::<ApiPayload>(body) {
+    // Parse MessagePack body: {"data": <binary>}
+    let payload: Value = match rmp_serde::from_slice(body) {
         Ok(p) => p,
         Err(_) => return utilities::error_response("Invalid request", "400"),
     };
-    let decrypted = match decrypt_api_data(&payload.data) {
+    let data = match payload.get("data").and_then(|v| v.as_array()) {
+        Some(arr) => {
+            let bytes: Vec<u8> = arr
+                .iter()
+                .filter_map(|v| v.as_u64().map(|n| n as u8))
+                .collect();
+            bytes
+        }
+        None => return utilities::error_response("Invalid request", "400"),
+    };
+
+    let decrypted = match decrypt_api_data_raw(&data) {
         Some(d) => d,
         None => return ApiError::DecryptionFailed.to_response("400"),
     };
-    let parsed = match serde_json::from_str::<serde_json::Value>(&decrypted) {
+    let parsed: Value = match rmp_serde::from_slice(&decrypted) {
         Ok(p) => p,
         Err(_) => return ApiError::InvalidDecryptedData.to_response("400"),
     };
     match handler(parsed) {
-        Ok(body_str) => encrypt_api_response(&body_str).map_or_else(
+        Ok(body_bytes) => encrypt_api_response_raw(&body_bytes).map_or_else(
             || ApiError::EncryptionError.to_response("500"),
-            |enc| utilities::json_response(&enc, "200"),
+            |enc| utilities::msgpack_response(&enc, "200"),
         ),
         Err(e) => ApiError::from(e).to_response("400"),
     }

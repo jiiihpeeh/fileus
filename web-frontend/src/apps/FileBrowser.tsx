@@ -26,7 +26,7 @@ export function FileBrowser(_props: FileBrowserProps) {
   const [notification, setNotification] = createSignal("");
   const [showRename, setShowRename] = createSignal(false);
   const [renameName, setRenameName] = createSignal("");
-  const [sortBy, setSortBy] = createSignal<"name" | "size" | "modified" | "type">("name");
+  const [sortBy, setSortBy] = createSignal<"name" | "size" | "modified" | "owner" | "permissions">("name");
   const [sortAsc, setSortAsc] = createSignal(true);
   const [showHidden, setShowHidden] = createSignal(false);
   const [filterExt, setFilterExt] = createSignal("");
@@ -34,7 +34,6 @@ export function FileBrowser(_props: FileBrowserProps) {
   const [splitView, setSplitView] = createSignal(false);
   const [splitDir, setSplitDir] = createSignal("");
   const [splitFiles, setSplitFiles] = createSignal<any[]>([]);
-  const [draggedFile, setDraggedFile] = createSignal<any>(null);
   const [dropTarget, setDropTarget] = createSignal<"main" | "split" | null>(null);
   const [activePane, setActivePane] = createSignal<"main" | "split">("main");
 
@@ -45,8 +44,8 @@ export function FileBrowser(_props: FileBrowserProps) {
   async function loadDirectory(dir?: string) {
     const targetDir = dir || currentDir() || "/";
     try {
-      const fileList = await apiList(targetDir);
-      setFiles(Array.isArray(fileList) ? fileList : []);
+      const resp = await apiList(targetDir);
+      setFiles(Array.isArray(resp.items) ? resp.items : []);
       setCurrentDir(targetDir);
       setSelectedFile(null);
     } catch (err) { showNotification(`Error: ${err}`); }
@@ -55,8 +54,8 @@ export function FileBrowser(_props: FileBrowserProps) {
   async function loadSplitDirectory(dir?: string) {
     const targetDir = dir || splitDir() || "/";
     try {
-      const fileList = await apiList(targetDir);
-      setSplitFiles(Array.isArray(fileList) ? fileList : []);
+      const resp = await apiList(targetDir);
+      setSplitFiles(Array.isArray(resp.items) ? resp.items : []);
       setSplitDir(targetDir);
     } catch (err) { showNotification(`Error: ${err}`); }
   }
@@ -103,7 +102,8 @@ export function FileBrowser(_props: FileBrowserProps) {
   function matchesFilter(file: any) {
     const ext = filterExt().toLowerCase().trim();
     if (!ext) return true;
-    return file.name.toLowerCase().endsWith(ext);
+    if (ext.startsWith(".")) return file.name.toLowerCase().endsWith(ext);
+    return file.name.toLowerCase().includes(ext);
   }
   function isImage(file: any) {
     if (file.is_dir) return false;
@@ -124,24 +124,21 @@ export function FileBrowser(_props: FileBrowserProps) {
       if (by === "name") cmp = a.name.localeCompare(b.name);
       else if (by === "size") cmp = a.size - b.size;
       else if (by === "modified") cmp = (a.modified || 0) - (b.modified || 0);
+      else if (by === "owner") cmp = (a.owner || "").localeCompare(b.owner || "");
+      else if (by === "permissions") cmp = (a.permissions || "").localeCompare(b.permissions || "");
       else cmp = a.name.localeCompare(b.name);
       return asc ? cmp : -cmp;
     });
     return f;
   }
 
-  function toggleSort(col: string) {
+  function toggleSort(col: any) {
     if (sortBy() === col) setSortAsc(!sortAsc());
-    else { setSortBy(col as any); setSortAsc(true); }
+    else { setSortBy(col); setSortAsc(true); }
   }
 
   async function navigateTo(path: string) { await loadDirectory(path); }
   async function navigateSplitTo(path: string) { await loadSplitDirectory(path); }
-  async function navigateUp() {
-    const parts = currentDir().split("/").filter(Boolean);
-    if (parts.length <= 1) await loadDirectory("/");
-    else await loadDirectory("/" + parts.slice(0, -1).join("/"));
-  }
   async function goHome() {
     try { const home = await apiGetHome(); await loadDirectory(home.path); }
     catch { await loadDirectory("/"); }
@@ -214,7 +211,6 @@ export function FileBrowser(_props: FileBrowserProps) {
     
     try {
       await apiMove(filePath, destPath);
-      setDraggedFile(null);
       setDropTarget(null);
       await loadDirectory();
       if (splitView()) await loadSplitDirectory();
@@ -268,6 +264,35 @@ export function FileBrowser(_props: FileBrowserProps) {
 
   onMount(async () => { await loadDrives(); await goHome(); });
 
+  const FileGridHeader = () => (
+    <div class="files-grid-header">
+      <div onClick={() => toggleSort("name")}></div>
+      <div onClick={() => toggleSort("name")}>Name {sortBy() === "name" ? (sortAsc() ? "↑" : "↓") : ""}</div>
+      <div onClick={() => toggleSort("size")}>Size {sortBy() === "size" ? (sortAsc() ? "↑" : "↓") : ""}</div>
+      <div onClick={() => toggleSort("owner")}>Owner {sortBy() === "owner" ? (sortAsc() ? "↑" : "↓") : ""}</div>
+      <div onClick={() => toggleSort("permissions")}>Perms {sortBy() === "permissions" ? (sortAsc() ? "↑" : "↓") : ""}</div>
+      <div onClick={() => toggleSort("modified")}>Date {sortBy() === "modified" ? (sortAsc() ? "↑" : "↓") : ""}</div>
+    </div>
+  );
+
+  const FileRow = (props: { file: any, pane: "main" | "split" }) => (
+    <div
+      class={`files-grid-row ${selectedFile()?.path === props.file.path ? "selected" : ""} ${props.file.is_dir ? "folder" : "file"} ${isHidden(props.file) ? "hidden" : ""}`}
+      draggable={true}
+      onDragStart={(e) => { e.dataTransfer?.setData("text/plain", props.file.path); }}
+      onClick={(e) => { e.stopPropagation(); setSelectedFile(props.file); setActivePane(props.pane); }}
+      onDblClick={() => props.file.is_dir ? (props.pane === "main" ? navigateTo(props.file.path) : navigateSplitTo(props.file.path)) : isImage(props.file) ? _props.onOpenImage?.(props.file.path) : null}
+      onContextMenu={(e) => handleContextMenu(e, props.file)}
+    >
+      <div>{props.file.is_dir ? "📁" : isImage(props.file) ? "🖼️" : "📄"}</div>
+      <div title={props.file.name}>{props.file.name}</div>
+      <div class="file-meta-info">{props.file.is_dir ? "-" : formatSize(props.file.size)}</div>
+      <div class="file-meta-info">{props.file.owner || "-"}</div>
+      <div class="file-meta-info">{props.file.permissions || "-"}</div>
+      <div class="file-meta-info">{formatDate(props.file.modified)}</div>
+    </div>
+  );
+
   return (
     <div class="app-files" onClick={closeContextMenu}>
       <Show when={notification()}>
@@ -300,23 +325,10 @@ export function FileBrowser(_props: FileBrowserProps) {
       <div class="files-toolbar">
         <button class="btn-sm" onClick={goHomeActive} title="Home">🏠</button>
         <button class="btn-sm" onClick={navigateUpActive} title="Up">⬆</button>
-        <button class="btn-sm" onClick={() => navigateActive(currentDir())} title="Refresh">⟳</button>
+        <button class="btn-sm" onClick={() => navigateActive(getActiveDir())} title="Refresh">⟳</button>
         <button class={`btn-sm ${splitView() ? "active" : ""}`} onClick={toggleSplitView} title="Split View">⫨</button>
         <span class="path-display">{getActiveDir() || "/"}</span>
         <button class="btn-sm" onClick={() => setShowNewFolder(true)} title="New Folder">+ Folder</button>
-      </div>
-
-      <div class="files-toolbar secondary">
-        <span class="toolbar-label">Sort:</span>
-        <button class={`btn-sm ${sortBy() === "name" ? "active" : ""}`} onClick={() => toggleSort("name")}>
-          Name {sortBy() === "name" ? (sortAsc() ? "↑" : "↓") : ""}
-        </button>
-        <button class={`btn-sm ${sortBy() === "size" ? "active" : ""}`} onClick={() => toggleSort("size")}>
-          Size {sortBy() === "size" ? (sortAsc() ? "↑" : "↓") : ""}
-        </button>
-        <button class={`btn-sm ${sortBy() === "modified" ? "active" : ""}`} onClick={() => toggleSort("modified")}>
-          Date {sortBy() === "modified" ? (sortAsc() ? "↑" : "↓") : ""}
-        </button>
         <span class="toolbar-sep">|</span>
         <label class="btn-sm toggle-btn">
           <input type="checkbox" checked={showHidden()} onChange={(e) => setShowHidden((e.target as HTMLInputElement).checked)} />
@@ -324,7 +336,7 @@ export function FileBrowser(_props: FileBrowserProps) {
         </label>
         <input
           class="input filter-input"
-          placeholder="Filter ext (.txt)"
+          placeholder="Filter..."
           value={filterExt()}
           onInput={(e) => setFilterExt((e.target as HTMLInputElement).value)}
         />
@@ -373,7 +385,7 @@ export function FileBrowser(_props: FileBrowserProps) {
             </div>
           </Show>
 
-          <div class={`files-list ${splitView() ? "split" : ""}`}>
+          <div class="files-list">
             <div 
               class="files-list-pane" 
               classList={{ "drop-target": dropTarget() === "main", "active-pane": activePane() === "main" }}
@@ -382,72 +394,50 @@ export function FileBrowser(_props: FileBrowserProps) {
               onDragLeave={() => setDropTarget(null)}
               onDrop={(e) => { e.preventDefault(); handleDrop(e, "main"); }}
             >
-              <div class="files-list-header">
-                <span class="path-display">{currentDir() || "/"}</span>
+              <div class="files-scroll-area">
+                <div class="files-grid">
+                  <FileGridHeader />
+                  <For each={sortedFiltered(files())}>
+                    {(file) => <FileRow file={file} pane="main" />}
+                  </For>
+                </div>
               </div>
-              <For each={sortedFiltered(files())}>
-                {(file) => (
-                  <div
-                    class={`file-item ${selectedFile()?.path === file.path ? "selected" : ""} ${file.is_dir ? "folder" : "file"} ${isHidden(file) ? "hidden" : ""}`}
-                    draggable={true}
-                    onDragStart={(e) => { e.dataTransfer?.setData("text/plain", file.path); setDraggedFile(file); }}
-                    onClick={(e) => { e.stopPropagation(); setSelectedFile(file); setActivePane("main"); }}
-                    onDblClick={() => file.is_dir ? navigateTo(file.path) : isImage(file) ? _props.onOpenImage?.(file.path) : null}
-                    onContextMenu={(e) => handleContextMenu(e, file)}
-                  >
-                    <span class="file-icon">{file.is_dir ? "📁" : isImage(file) ? "🖼️" : "📄"}</span>
-                    <span class="file-name" title={file.name}>{file.name}</span>
-                    <span class="file-size">{file.is_dir ? "-" : formatSize(file.size)}</span>
-                  </div>
-                )}
-              </For>
             </div>
 
             <Show when={splitView()}>
               <div 
-                class="files-list-pane split-pane" 
+                class="files-list-pane" 
                 classList={{ "drop-target": dropTarget() === "split", "active-pane": activePane() === "split" }}
                 onClick={() => setActivePane("split")}
                 onDragOver={(e) => { e.preventDefault(); setDropTarget("split"); }}
                 onDragLeave={() => setDropTarget(null)}
                 onDrop={(e) => { e.preventDefault(); handleDrop(e, "split"); }}
               >
-                <div class="files-list-header">
-                  <span class="path-display">{splitDir() || "/"}</span>
+                <div class="files-scroll-area" style="border-left: 1px solid var(--border)">
+                  <div class="files-grid">
+                    <FileGridHeader />
+                    <For each={sortedFiltered(splitFiles())}>
+                      {(file) => <FileRow file={file} pane="split" />}
+                    </For>
+                  </div>
                 </div>
-                <For each={sortedFiltered(splitFiles())}>
-                  {(file) => (
-                    <div
-                      class={`file-item ${file.is_dir ? "folder" : "file"} ${isHidden(file) ? "hidden" : ""}`}
-                      draggable={true}
-                      onDragStart={(e) => { e.dataTransfer?.setData("text/plain", file.path); setDraggedFile(file); }}
-                      onClick={(e) => { e.stopPropagation(); setActivePane("split"); }}
-                      onDblClick={() => file.is_dir ? navigateSplitTo(file.path) : null}
-                      onContextMenu={(e) => handleContextMenu(e, file)}
-                    >
-                      <span class="file-icon">{file.is_dir ? "📁" : isImage(file) ? "🖼️" : "📄"}</span>
-                      <span class="file-name" title={file.name}>{file.name}</span>
-                      <span class="file-size">{file.is_dir ? "-" : formatSize(file.size)}</span>
-                    </div>
-                  )}
-                </For>
               </div>
             </Show>
           </div>
 
           <Show when={selectedFile()}>
             <div class="files-details">
-              <div class="details-header">
-                <strong>{selectedFile()?.name}</strong>
-                <button class="btn-sm" onClick={() => setSelectedFile(null)}>✕</button>
+              <div class="details-info">
+                <strong>Name:</strong> <span>{selectedFile()?.name}</span>
+                <strong>Path:</strong> <span>{selectedFile()?.path}</span>
+                <strong>Size:</strong> <span>{selectedFile()?.is_dir ? "-" : formatSize(selectedFile()?.size)}</span>
+                <strong>Modified:</strong> <span>{formatDate(selectedFile()?.modified)}</span>
               </div>
-              <p><small>Path: {selectedFile()?.path}</small></p>
-              <p><small>Size: {selectedFile()?.is_dir ? "-" : formatSize(selectedFile()?.size)}</small></p>
-              <p><small>Modified: {formatDate(selectedFile()?.modified)}</small></p>
               <div class="details-actions">
                 <button class="btn-sm" onClick={() => { setShowRename(true); setRenameName(selectedFile()!.name); }}>Rename</button>
                 <button class="btn-sm" onClick={() => setShowCopyDest(true)}>Copy/Move</button>
                 <button class="btn-sm btn-danger" onClick={deleteFile}>Delete</button>
+                <button class="btn-sm" onClick={() => setSelectedFile(null)}>Close</button>
               </div>
             </div>
           </Show>

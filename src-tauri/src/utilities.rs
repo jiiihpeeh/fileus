@@ -78,13 +78,32 @@ pub fn urlencoding_decode(s: &str) -> String {
         .collect()
 }
 
-pub fn json_response(data: &str, status: &str) -> String {
-    format!("HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}", status, data.len(), data)
+pub fn msgpack_response(data: &[u8], status: &str) -> Vec<u8> {
+    let header = format!(
+        "HTTP/1.1 {} OK\r\nContent-Type: application/msgpack\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+        status,
+        data.len()
+    );
+    let mut response = Vec::with_capacity(header.len() + data.len());
+    response.extend_from_slice(header.as_bytes());
+    response.extend_from_slice(data);
+    response
 }
 
-pub fn error_response(msg: &str, status: &str) -> String {
-    let body = format!("{{\"error\":\"{}\"}}", msg);
-    format!("HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}", status, body.len(), body)
+pub fn error_response(msg: &str, status: &str) -> Vec<u8> {
+    let body = rmp_serde::to_vec(&rmpv::Value::Map(vec![(
+        rmpv::Value::String("error".into()),
+        rmpv::Value::String(msg.into()),
+    )]))
+    .unwrap_or_default();
+    let header = format!(
+        "HTTP/1.1 {} OK\r\nContent-Type: application/msgpack\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+        status,
+        body.len()
+    );
+    let mut response = header.into_bytes();
+    response.extend(body);
+    response
 }
 
 pub fn base64_encode(data: &[u8]) -> String {

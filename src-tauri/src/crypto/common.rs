@@ -6,37 +6,36 @@ use ring::digest::{digest, SHA256};
 use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::shared::{SESSION_NEW_KEY, SHARED_KEY};
-use serde_json;
 
-pub fn decrypt_api_data(data: &str) -> Option<String> {
+/// Decrypt raw API data bytes (no base64).
+/// Input: nonce (12 bytes) || ciphertext
+/// Output: inner payload bytes
+pub fn decrypt_api_data_raw(data: &[u8]) -> Option<Vec<u8>> {
     let new_key = SESSION_NEW_KEY.lock().unwrap();
     if new_key.is_empty() {
         return None;
     }
     let key = &*new_key;
 
-    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).ok()?;
     const NONCE_SIZE: usize = 12;
-    if bytes.len() < NONCE_SIZE + 16 {
+    if data.len() < NONCE_SIZE + 16 {
         return None;
     }
 
-    let nonce = Nonce::from_slice(&bytes[..NONCE_SIZE]);
-    let ciphertext = &bytes[NONCE_SIZE..];
+    let nonce = Nonce::from_slice(&data[..NONCE_SIZE]);
+    let ciphertext = &data[NONCE_SIZE..];
     let key_hash = digest(&SHA256, key.as_bytes());
     let cipher = Aes256Gcm::new_from_slice(key_hash.as_ref()).ok()?;
 
     let plaintext = cipher.decrypt(nonce, ciphertext).ok()?;
 
-    let decoded: Vec<String> = rmp_serde::from_slice(&plaintext).ok()?;
-    if decoded.len() >= 2 {
-        Some(decoded[1].clone())
-    } else {
-        None
-    }
+    let decoded: (String, Vec<u8>) = rmp_serde::from_slice(&plaintext).ok()?;
+    Some(decoded.1)
 }
 
-pub fn encrypt_api_response(response_data: &str) -> Option<String> {
+/// Encrypt API response to raw bytes (no base64).
+/// Returns: MessagePack {"data": [encrypted_bytes_as_array]}
+pub fn encrypt_api_response_raw(response_data: &[u8]) -> Option<Vec<u8>> {
     let new_key = SESSION_NEW_KEY.lock().unwrap();
     if new_key.is_empty() {
         return None;
@@ -44,7 +43,6 @@ pub fn encrypt_api_response(response_data: &str) -> Option<String> {
     let key = &*new_key;
 
     let key_hash = digest(&SHA256, key.as_bytes());
-
     let cipher = Aes256Gcm::new_from_slice(key_hash.as_ref()).ok()?;
 
     let rng = SystemRandom::new();
@@ -52,7 +50,6 @@ pub fn encrypt_api_response(response_data: &str) -> Option<String> {
     rng.fill(&mut nonce_bytes).ok()?;
 
     let salt = generate_random_string(random_len(49, 87));
-
     let payload_buf = rmp_serde::to_vec(&(salt, response_data)).ok()?;
 
     let nonce_iv = Nonce::from_slice(&nonce_bytes);
@@ -62,10 +59,12 @@ pub fn encrypt_api_response(response_data: &str) -> Option<String> {
     combined.extend_from_slice(&nonce_bytes);
     combined.extend_from_slice(&ciphertext);
 
-    let encrypted = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &combined);
-
-    let response_json = serde_json::to_string(&serde_json::json!({"data": encrypted})).unwrap();
-    Some(response_json)
+    // Wrap as {"data": [byte, byte, ...]}
+    #[derive(serde::Serialize)]
+    struct DataResponse<'a> {
+        data: &'a [u8],
+    }
+    rmp_serde::to_vec(&DataResponse { data: &combined }).ok()
 }
 
 pub fn encrypt_api_binary_response_simple(binary_data: &[u8]) -> Option<Vec<u8>> {
@@ -93,7 +92,7 @@ pub fn encrypt_api_binary_response_simple(binary_data: &[u8]) -> Option<Vec<u8>>
     Some(combined)
 }
 
-pub fn encrypt_api_binary_response(metadata_json: &str, binary_data: &[u8]) -> Option<Vec<u8>> {
+pub fn encrypt_api_binary_response(metadata: &rmpv::Value, binary_data: &[u8]) -> Option<Vec<u8>> {
     let new_key = SESSION_NEW_KEY.lock().unwrap();
     if new_key.is_empty() {
         return None;
@@ -110,7 +109,7 @@ pub fn encrypt_api_binary_response(metadata_json: &str, binary_data: &[u8]) -> O
 
     let salt = generate_random_string(random_len(49, 87));
 
-    let payload_buf = rmp_serde::to_vec(&(salt, metadata_json, binary_data)).ok()?;
+    let payload_buf = rmp_serde::to_vec(&(salt, metadata, binary_data)).ok()?;
 
     let nonce_iv = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher.encrypt(nonce_iv, payload_buf.as_ref()).ok()?;
@@ -122,15 +121,13 @@ pub fn encrypt_api_binary_response(metadata_json: &str, binary_data: &[u8]) -> O
     Some(combined)
 }
 
-pub fn decrypt_aes_gcm(key: &str, data: &str) -> Result<Vec<String>, String> {
-    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)
-        .map_err(|_| "Invalid base64".to_string())?;
+pub fn decrypt_aes_gcm_raw(key: &str, data: &[u8]) -> Result<Vec<String>, String> {
     const NONCE_SIZE: usize = 12;
-    if bytes.len() < NONCE_SIZE + 16 {
+    if data.len() < NONCE_SIZE + 16 {
         return Err("Invalid ciphertext".to_string());
     }
-    let nonce = Nonce::from_slice(&bytes[..NONCE_SIZE]);
-    let ciphertext = &bytes[NONCE_SIZE..];
+    let nonce = Nonce::from_slice(&data[..NONCE_SIZE]);
+    let ciphertext = &data[NONCE_SIZE..];
     let key_hash = digest(&SHA256, key.as_bytes());
     let cipher = Aes256Gcm::new_from_slice(key_hash.as_ref())
         .map_err(|_| "Failed to initialize cipher".to_string())?;

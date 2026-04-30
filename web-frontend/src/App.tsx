@@ -1,4 +1,5 @@
 import { createSignal, Switch, Match } from "solid-js";
+import { encode, decode } from "@msgpack/msgpack";
 import { Desktop } from "./apps/Desktop";
 import { generateNewKey, encryptSession } from "./crypto";
 import { setSessionKey } from "./api";
@@ -21,11 +22,11 @@ export default function App() {
       
       const response = await fetch('/api/session/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: encrypted }),
+        headers: { 'Content-Type': 'application/msgpack' },
+        body: encode({ data: [...encrypted] }),
       });
       
-      const result = await response.json();
+      const result = decode(new Uint8Array(await response.arrayBuffer())) as { valid: boolean };
       
       if (result.valid) {
         setSessionKey(newKey);

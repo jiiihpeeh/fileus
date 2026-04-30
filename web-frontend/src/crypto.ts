@@ -25,7 +25,7 @@ export function generateNewKey(): string {
 export async function encryptSession(
   newKey: string,
   sharedKey: string
-): Promise<string> {
+): Promise<Uint8Array> {
   const salt = generateRandomString(64, charset);
   const keyData = new TextEncoder().encode(sharedKey);
   const hash = await crypto.subtle.digest("SHA-256", keyData);
@@ -39,18 +39,22 @@ export async function encryptSession(
   combined.set(nonce);
   combined.set(new Uint8Array(ciphertext), nonce.length);
 
-  return btoa(String.fromCharCode(...combined));
+  return combined;
 }
 
+/// Decrypt API message from raw bytes (no base64).
+/// Input: nonce (12 bytes) || ciphertext
+/// Output: inner payload bytes
 export async function decryptApiMessage(
-  encryptedData: string,
+  encryptedData: Uint8Array,
   sessionKey: string
-): Promise<string> {
-  const data = atob(encryptedData);
-  const bytes = new Uint8Array(data.split("").map(c => c.charCodeAt(0)));
-
-  const nonce = bytes.slice(0, 12);
-  const ciphertext = bytes.slice(12);
+): Promise<Uint8Array> {
+  if (encryptedData.length < 12 + 16) {
+    throw new Error("Invalid encrypted data");
+  }
+  
+  const nonce = encryptedData.slice(0, 12);
+  const ciphertext = encryptedData.slice(12);
 
   const keyData = new TextEncoder().encode(sessionKey);
   const hash = await crypto.subtle.digest("SHA-256", keyData);
@@ -67,14 +71,14 @@ export async function decryptApiMessage(
 
   console.debug("[CRYPTO] decoded:", decoded);
   
-  let result: string;
+  let result: Uint8Array;
   if (Array.isArray(decoded)) {
     result = decoded[1];
   } else {
     result = decoded.payload || decoded;
   }
   
-  console.debug("[CRYPTO] payload:", result.substring(0, 80) + "...");
+  console.debug("[CRYPTO] payload bytes:", result.length);
   return result;
 }
 
@@ -118,10 +122,12 @@ export async function decryptApiBinarySimple(
   return new Uint8Array(plaintext);
 }
 
+/// Encrypt API message to raw bytes (no base64).
+/// Returns: nonce (12 bytes) || ciphertext
 export async function encryptApiMessage(
-  payload: string,
+  payload: Uint8Array,
   sessionKey: string
-): Promise<string> {
+): Promise<Uint8Array> {
   const salt = generateRandomString(64, charset);
   const keyData = new TextEncoder().encode(sessionKey);
   const hash = await crypto.subtle.digest("SHA-256", keyData);
@@ -135,5 +141,5 @@ export async function encryptApiMessage(
   combined.set(nonce);
   combined.set(new Uint8Array(ciphertext), nonce.length);
 
-  return btoa(String.fromCharCode(...combined));
+  return combined;
 }

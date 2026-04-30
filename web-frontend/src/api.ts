@@ -1,3 +1,4 @@
+import { encode, decode } from "@msgpack/msgpack";
 import { encryptApiMessage, decryptApiMessage, decryptApiBinaryResponse, decryptApiBinarySimple } from "./crypto";
 import { storeChunk, deleteChunks, reconstructFile, reconstructFileStream } from "./chunkStorage";
 
@@ -150,42 +151,53 @@ export interface ProcessesPayload {}
 
 async function encryptedRequest<T>(path: string, payload: object): Promise<T> {
   const startTime = performance.now();
-  const payloadStr = JSON.stringify(payload);
-  const encrypted = await encryptApiMessage(payloadStr, getSessionKey());
+  const payloadBytes = encode(payload);
+  const encrypted = await encryptApiMessage(payloadBytes, getSessionKey());
   
-  console.debug(`[API] → ${path}`, { payload, encrypted: encrypted.substring(0, 50) + "..." });
+  console.debug(`[API] → ${path}`, { payload, encryptedLength: encrypted.length });
+  
+  // Send MessagePack body with binary data: {data: encryptedBytes}
+  const body = encode({ data: Array.from(encrypted) });
   
   const r = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data: encrypted }),
+    headers: { "Content-Type": "application/msgpack" },
+    body,
   });
   
-  const resultText = await r.text();
+  const resultBytes = new Uint8Array(await r.arrayBuffer());
   const elapsed = Math.round(performance.now() - startTime);
   
   if (!r.ok) {
-    console.error(`[API] ✗ ${path} (${elapsed}ms)`, { status: r.status, body: resultText });
-    throw new Error(resultText);
+    console.error(`[API] ✗ ${path} (${elapsed}ms)`, { status: r.status });
+    throw new Error(`HTTP ${r.status}`);
   }
   
   try {
-    const parsed = JSON.parse(resultText);
-    if (parsed && typeof parsed === "object" && !parsed.data) {
-      console.debug(`[API] ← ${path} (${elapsed}ms)`, parsed);
-      return parsed as T;
+    // Parse MessagePack response
+    const parsed = decode(resultBytes) as any;
+    
+    // Check if it's an error response
+    if (parsed && parsed.error) {
+      console.error(`[API] ✗ ${path} (${elapsed}ms)`, parsed);
+      throw new Error(parsed.error);
     }
-    if (parsed && parsed.data && typeof parsed.data === "string") {
-      const decrypted = await decryptApiMessage(parsed.data, getSessionKey());
-      console.debug(`[API] decrypted:`, decrypted.substring(0, 100) + "...");
-      const result = JSON.parse(decrypted) as T;
+    
+    // Check if there's encrypted data to decrypt
+    if (parsed && parsed.data) {
+      const encryptedData = parsed.data instanceof Uint8Array 
+        ? parsed.data 
+        : new Uint8Array(parsed.data);
+      const decrypted = await decryptApiMessage(encryptedData, getSessionKey());
+      const result = decode(decrypted) as T;
       console.debug(`[API] ← ${path} (${elapsed}ms)`, result);
       return result;
     }
+    
     console.debug(`[API] ← ${path} (${elapsed}ms)`, parsed);
     return parsed as T;
   } catch (e) {
-    console.error(`[API] ✗ ${path} (${elapsed}ms)`, { bodyStart: resultText.substring(0, 100), error: e });
+    console.error(`[API] ✗ ${path} (${elapsed}ms)`, { error: e });
     throw e;
   }
 }
@@ -244,21 +256,23 @@ export async function apiGetProcesses(): Promise<ProcessInfo[]> {
 
 export async function apiBinary(path: string): Promise<Blob> {
   const startTime = performance.now();
-  const payloadStr = JSON.stringify({ path });
-  const encrypted = await encryptApiMessage(payloadStr, getSessionKey());
+  const payloadBytes = encode({ path });
+  const encrypted = await encryptApiMessage(payloadBytes, getSessionKey());
   
-  console.debug(`[API] → /api/files/binary`, { path, encrypted: encrypted.substring(0, 50) + "..." });
+  console.debug(`[API] → /api/files/binary`, { path, encryptedLength: encrypted.length });
+  
+  // Send MessagePack body with binary data
+  const body = encode({ data: Array.from(encrypted) });
   
   const r = await fetch("/api/files/binary", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data: encrypted }),
+    headers: { "Content-Type": "application/msgpack" },
+    body,
   });
   
   if (!r.ok) {
-    const body = await r.text();
-    console.error(`[API] ✗ /api/files/binary (${Math.round(performance.now() - startTime)}ms)`, { status: r.status, body });
-    throw new Error(body);
+    console.error(`[API] ✗ /api/files/binary (${Math.round(performance.now() - startTime)}ms)`, { status: r.status });
+    throw new Error(`HTTP ${r.status}`);
   }
   
   const arrayBuffer = await r.arrayBuffer();
@@ -271,21 +285,23 @@ export async function apiBinary(path: string): Promise<Blob> {
 
 export async function apiDownload(path: string): Promise<void> {
   const startTime = performance.now();
-  const payloadStr = JSON.stringify({ path });
-  const encrypted = await encryptApiMessage(payloadStr, getSessionKey());
+  const payloadBytes = encode({ path });
+  const encrypted = await encryptApiMessage(payloadBytes, getSessionKey());
   
-  console.debug(`[API] → /api/files/download`, { path, encrypted: encrypted.substring(0, 50) + "..." });
+  console.debug(`[API] → /api/files/download`, { path, encryptedLength: encrypted.length });
+  
+  // Send MessagePack body with binary data
+  const body = encode({ data: Array.from(encrypted) });
   
   const response = await fetch("/api/files/download", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data: encrypted }),
+    headers: { "Content-Type": "application/msgpack" },
+    body,
   });
   
   if (!response.ok) {
-    const body = await response.text();
-    console.error(`[API] ✗ /api/files/download (${Math.round(performance.now() - startTime)}ms)`, { status: response.status, body });
-    throw new Error(body);
+    console.error(`[API] ✗ /api/files/download (${Math.round(performance.now() - startTime)}ms)`, { status: response.status });
+    throw new Error(`HTTP ${response.status}`);
   }
   
   const blob = await response.blob();
@@ -311,21 +327,23 @@ export async function apiDownloadChunked(
   const startTime = performance.now();
   await deleteChunks(path);
   
-  const payloadStr = JSON.stringify({ path, chunk_index: 0, total_chunks: 1 });
-  const encrypted = await encryptApiMessage(payloadStr, getSessionKey());
+  const payloadBytes = encode({ path, chunk_index: 0, total_chunks: 1 });
+  const encrypted = await encryptApiMessage(payloadBytes, getSessionKey());
   
-  console.debug(`[API] → /api/fileupload/binary`, { path, chunk_index: 0, encrypted: encrypted.substring(0, 50) + "..." });
+  console.debug(`[API] → /api/fileupload/binary`, { path, chunk_index: 0, encryptedLength: encrypted.length });
+  
+  // Send MessagePack body with binary data
+  const body = encode({ data: Array.from(encrypted) });
   
   const r = await fetch("/api/fileupload/binary", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data: encrypted }),
+    headers: { "Content-Type": "application/msgpack" },
+    body,
   });
   
   if (!r.ok) {
-    const body = await r.text();
-    console.error(`[API] ✗ /api/fileupload/binary (${Math.round(performance.now() - startTime)}ms)`, { status: r.status, body });
-    throw new Error(body);
+    console.error(`[API] ✗ /api/fileupload/binary (${Math.round(performance.now() - startTime)}ms)`, { status: r.status });
+    throw new Error(`HTTP ${r.status}`);
   }
   
   const arrayBuffer = await r.arrayBuffer();
@@ -337,19 +355,19 @@ export async function apiDownloadChunked(
   console.debug(`[API] ← /api/fileupload/binary (${Math.round(performance.now() - startTime)}ms)`, { metadata });
   
   for (let i = 0; i < totalChunks; i++) {
-    const p = JSON.stringify({ path, chunk_index: i, total_chunks: totalChunks });
+    const p = encode({ path, chunk_index: i, total_chunks: totalChunks });
     const enc = await encryptApiMessage(p, getSessionKey());
     
+    const chunkBody = encode({ data: Array.from(enc) });
     const res = await fetch("/api/fileupload/binary", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ data: enc }),
+      headers: { "Content-Type": "application/msgpack" },
+      body: chunkBody,
     });
     
     if (!res.ok) {
-      const body = await res.text();
-      console.error(`[API] ✗ chunk ${i}/${totalChunks} (${Math.round(performance.now() - startTime)}ms)`, { status: res.status, body });
-      throw new Error(body);
+      console.error(`[API] ✗ chunk ${i}/${totalChunks} (${Math.round(performance.now() - startTime)}ms)`, { status: res.status });
+      throw new Error(`HTTP ${res.status}`);
     }
     
     const buf = await res.arrayBuffer();
@@ -408,22 +426,30 @@ export function formatDate(ts?: number): string {
   return new Date(ts * 1000).toLocaleString();
 }
 
-export async function apiSessionVerify(encryptedData: string): Promise<SessionVerifyResponse> {
+export async function apiSessionVerify(encryptedData: Uint8Array): Promise<SessionVerifyResponse> {
+  const body = encode({ data: Array.from(encryptedData) });
+  
   const r = await fetch(`/api/session/verify`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data: encryptedData }),
+    headers: { "Content-Type": "application/msgpack" },
+    body,
   });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  
+  const resultBytes = new Uint8Array(await r.arrayBuffer());
+  return decode(resultBytes) as SessionVerifyResponse;
 }
 
-export async function apiSessionDecrypt(encryptedData: string): Promise<SessionDecryptResponse> {
+export async function apiSessionDecrypt(encryptedData: Uint8Array): Promise<SessionDecryptResponse> {
+  const body = encode({ data: Array.from(encryptedData) });
+  
   const r = await fetch(`/api/session/decrypt`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data: encryptedData }),
+    headers: { "Content-Type": "application/msgpack" },
+    body,
   });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  
+  const resultBytes = new Uint8Array(await r.arrayBuffer());
+  return decode(resultBytes) as SessionDecryptResponse;
 }
