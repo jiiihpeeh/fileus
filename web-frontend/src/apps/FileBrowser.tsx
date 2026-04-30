@@ -1,10 +1,31 @@
 import { createSignal, For, Show, onMount } from "solid-js";
+import { 
+  Home, 
+  ArrowUp, 
+  RefreshCw, 
+  Columns2, 
+  FolderPlus, 
+  Folder, 
+  File, 
+  Image, 
+  Download, 
+  Pencil, 
+  Copy, 
+  ExternalLink,
+  Trash2,
+  HardDrive,
+  Clock,
+  User,
+  ShieldCheck,
+  Eye,
+  EyeOff
+} from "lucide-solid";
 import { apiList, apiCreateDir, apiDelete, apiRename, apiCopy, apiMove, apiGetHome, apiGetDrives, apiDownload, formatSize, formatDate } from "../api";
 import "./FileBrowser.css";
 
 interface ContextMenuItem {
   label: string;
-  icon?: string;
+  icon?: any;
   action: () => void;
   danger?: boolean;
   disabled?: boolean;
@@ -242,23 +263,23 @@ export function FileBrowser(_props: FileBrowserProps) {
   function contextMenuItems(file: any): ContextMenuItem[] {
     const items: ContextMenuItem[] = [];
     if (file.is_dir) {
-      items.push({ label: "Open", icon: "📂", action: () => navigateTo(file.path) });
-      items.push({ label: "Download as ZIP", icon: "📦", action: () => apiDownload(file.path) });
+      items.push({ label: "Open", icon: Folder, action: () => navigateTo(file.path) });
+      items.push({ label: "Download as ZIP", icon: Download, action: () => apiDownload(file.path) });
       items.push({ label: "", action: () => {} });
     } else {
-      items.push({ label: "Open", icon: "📄", action: () => {} });
+      items.push({ label: "Open", icon: ExternalLink, action: () => {} });
       if (isImage(file)) {
-        items.push({ label: "Open as Image", icon: "🖼️", action: () => _props.onOpenImage?.(file.path) });
+        items.push({ label: "Open as Image", icon: Image, action: () => _props.onOpenImage?.(file.path) });
       }
-      items.push({ label: "Download", icon: "📥", action: () => apiDownload(file.path) });
+      items.push({ label: "Download", icon: Download, action: () => apiDownload(file.path) });
       items.push({ label: "", action: () => {} });
     }
     items.push(
-      { label: "Rename", icon: "✏️", action: () => { setShowRename(true); setRenameName(file.name); } },
-      { label: "Copy", icon: "📋", action: () => { setShowCopyDest(true); setCopyDestPath(currentDir()); setSelectedFile(file); } },
-      { label: "Move", icon: "📦", action: () => { setShowCopyDest(true); setCopyDestPath(currentDir()); setSelectedFile(file); } },
+      { label: "Rename", icon: Pencil, action: () => { setShowRename(true); setRenameName(file.name); } },
+      { label: "Copy", icon: Copy, action: () => { setShowCopyDest(true); setCopyDestPath(currentDir()); setSelectedFile(file); } },
+      { label: "Move", icon: ExternalLink, action: () => { setShowCopyDest(true); setCopyDestPath(currentDir()); setSelectedFile(file); } },
       { label: "", action: () => {} },
-      { label: "Delete", icon: "🗑️", action: () => { setSelectedFile(file); deleteFile(); }, danger: true }
+      { label: "Delete", icon: Trash2, action: () => { setSelectedFile(file); deleteFile(); }, danger: true }
     );
     return items;
   }
@@ -270,9 +291,9 @@ export function FileBrowser(_props: FileBrowserProps) {
       <div onClick={() => toggleSort("name")}></div>
       <div onClick={() => toggleSort("name")}>Name {sortBy() === "name" ? (sortAsc() ? "↑" : "↓") : ""}</div>
       <div onClick={() => toggleSort("size")}>Size {sortBy() === "size" ? (sortAsc() ? "↑" : "↓") : ""}</div>
-      <div onClick={() => toggleSort("owner")}>Owner {sortBy() === "owner" ? (sortAsc() ? "↑" : "↓") : ""}</div>
-      <div onClick={() => toggleSort("permissions")}>Perms {sortBy() === "permissions" ? (sortAsc() ? "↑" : "↓") : ""}</div>
-      <div onClick={() => toggleSort("modified")}>Date {sortBy() === "modified" ? (sortAsc() ? "↑" : "↓") : ""}</div>
+      <div onClick={() => toggleSort("owner")}><User size={12} class="inline-icon" /> Owner {sortBy() === "owner" ? (sortAsc() ? "↑" : "↓") : ""}</div>
+      <div onClick={() => toggleSort("permissions")}><ShieldCheck size={12} class="inline-icon" /> Perms {sortBy() === "permissions" ? (sortAsc() ? "↑" : "↓") : ""}</div>
+      <div onClick={() => toggleSort("modified")}><Clock size={12} class="inline-icon" /> Date {sortBy() === "modified" ? (sortAsc() ? "↑" : "↓") : ""}</div>
     </div>
   );
 
@@ -285,7 +306,11 @@ export function FileBrowser(_props: FileBrowserProps) {
       onDblClick={() => props.file.is_dir ? (props.pane === "main" ? navigateTo(props.file.path) : navigateSplitTo(props.file.path)) : isImage(props.file) ? _props.onOpenImage?.(props.file.path) : null}
       onContextMenu={(e) => handleContextMenu(e, props.file)}
     >
-      <div>{props.file.is_dir ? "📁" : isImage(props.file) ? "🖼️" : "📄"}</div>
+      <div class="file-icon-cell">
+        <Show when={props.file.is_dir} fallback={isImage(props.file) ? <Image size={18} /> : <File size={18} />}>
+          <Folder size={18} />
+        </Show>
+      </div>
       <div title={props.file.name}>{props.file.name}</div>
       <div class="file-meta-info">{props.file.is_dir ? "-" : formatSize(props.file.size)}</div>
       <div class="file-meta-info">{props.file.owner || "-"}</div>
@@ -308,13 +333,14 @@ export function FileBrowser(_props: FileBrowserProps) {
         >
           <For each={contextMenuItems(contextMenu()!.file)}>
             {(item) => {
+              const Icon = item.icon;
               if (item.label === "") return <div class="context-menu-sep" />;
               return (
                 <div
                   class={`context-menu-item ${item.danger ? "danger" : ""} ${item.disabled ? "disabled" : ""}`}
                   onClick={() => !item.disabled && handleContextAction(item.action)}
                 >
-                  <Show when={item.icon}><span>{item.icon}</span></Show>
+                  <Show when={Icon}><Icon size={16} /></Show>
                   <span>{item.label}</span>
                 </div>
               );
@@ -324,17 +350,23 @@ export function FileBrowser(_props: FileBrowserProps) {
       </Show>
 
       <div class="files-toolbar">
-        <button class="btn-sm" onClick={goHomeActive} title="Home">🏠</button>
-        <button class="btn-sm" onClick={navigateUpActive} title="Up">⬆</button>
-        <button class="btn-sm" onClick={() => navigateActive(getActiveDir())} title="Refresh">⟳</button>
-        <button class={`btn-sm ${splitView() ? "active" : ""}`} onClick={toggleSplitView} title="Split View">⫨</button>
+        <button class="btn-sm" onClick={goHomeActive} title="Home"><Home size={16} /></button>
+        <button class="btn-sm" onClick={navigateUpActive} title="Up"><ArrowUp size={16} /></button>
+        <button class="btn-sm" onClick={() => navigateActive(getActiveDir())} title="Refresh"><RefreshCw size={16} /></button>
+        <button class={`btn-sm ${splitView() ? "active" : ""}`} onClick={toggleSplitView} title="Split View"><Columns2 size={16} /></button>
         <span class="path-display">{getActiveDir() || "/"}</span>
-        <button class="btn-sm" onClick={() => setShowNewFolder(true)} title="New Folder">+ Folder</button>
+        <button class="btn-sm" onClick={() => setShowNewFolder(true)} title="New Folder"><FolderPlus size={16} /> Folder</button>
         <span class="toolbar-sep">|</span>
-        <label class="btn-sm toggle-btn">
-          <input type="checkbox" checked={showHidden()} onChange={(e) => setShowHidden((e.target as HTMLInputElement).checked)} />
+        <button 
+          class={`btn-sm ${showHidden() ? "active" : ""}`} 
+          onClick={() => setShowHidden(!showHidden())} 
+          title={showHidden() ? "Hide Hidden Files" : "Show Hidden Files"}
+        >
+          <Show when={showHidden()} fallback={<EyeOff size={16} />}>
+            <Eye size={16} />
+          </Show>
           Hidden
-        </label>
+        </button>
         <input
           class="input filter-input"
           placeholder="Filter..."
@@ -347,11 +379,11 @@ export function FileBrowser(_props: FileBrowserProps) {
         <div class="files-sidebar">
           <div class="sidebar-section">
             <h4>Places</h4>
-            <button class="sidebar-item" onClick={goHome}>📁 Home</button>
+            <button class="sidebar-item" onClick={goHome}><Folder size={14} /> Home</button>
             <For each={drives()}>
-              {(d) => <button class="sidebar-item" onClick={() => navigateTo(d.path)}>💾 {d.name}</button>}
+              {(d) => <button class="sidebar-item" onClick={() => navigateTo(d.path)}><HardDrive size={14} /> {d.name}</button>}
             </For>
-            <button class="sidebar-item" onClick={() => navigateTo("/tmp")}>📄 Temp</button>
+            <button class="sidebar-item" onClick={() => navigateTo("/tmp")}><File size={14} /> Temp</button>
           </div>
         </div>
 

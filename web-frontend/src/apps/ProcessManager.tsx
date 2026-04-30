@@ -1,5 +1,7 @@
-import { createSignal, For, onMount } from "solid-js";
+import { createSignal, For, onMount, Show } from "solid-js";
+import { RefreshCw, Search, Cpu, Activity, LayoutList } from "lucide-solid";
 import { apiGetProcesses, formatSize } from "../api";
+import "./ProcessManager.css";
 
 interface ProcessManagerProps {
   onClose: () => void;
@@ -46,45 +48,63 @@ export function ProcessManager(_props: ProcessManagerProps) {
     else { setSortBy(col as any); setSortAsc(false); }
   }
 
-  function sortIcon(col: string) {
-    if (sortBy() !== col) return "";
-    return sortAsc() ? " ↑" : " ↓";
+  function SortIcon(props: { col: string }) {
+    if (sortBy() !== props.col) return null;
+    return <span>{sortAsc() ? " ↑" : " ↓"}</span>;
   }
 
-  onMount(loadProcesses);
+  onMount(() => {
+    loadProcesses();
+    const interval = setInterval(loadProcesses, 5000);
+    return () => clearInterval(interval);
+  });
 
   return (
     <div class="app-processes">
       <div class="proc-toolbar">
-        <input class="input" placeholder="Search by name..." value={search()}
-          onInput={(e) => setSearch((e.target as HTMLInputElement).value)} />
-        <button class="btn-sm" onClick={loadProcesses} disabled={loading()}>
-          {loading() ? "..." : "⟳"}
-        </button>
-        <span class="proc-count">{processes().length} processes</span>
+        <div style="display: flex; align-items: center; gap: 8px; flex: 1;">
+          <Search size={14} color="var(--text-secondary)" />
+          <input class="input" style="flex: 1;" placeholder="Search processes..." value={search()}
+            onInput={(e) => setSearch((e.target as HTMLInputElement).value)} />
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span class="file-meta-info"><LayoutList size={12} class="inline-icon" /> {processes().length}</span>
+          <button class="btn-sm" onClick={loadProcesses} disabled={loading()} title="Refresh">
+            <RefreshCw size={14} class={loading() ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
-      <table class="proc-table">
-        <thead>
-          <tr>
-            <th onClick={() => toggleSort("pid")}>PID{sortIcon("pid")}</th>
-            <th onClick={() => toggleSort("name")}>Name{sortIcon("name")}</th>
-            <th onClick={() => toggleSort("cpu")}>CPU%{sortIcon("cpu")}</th>
-            <th onClick={() => toggleSort("memory")}>Memory{sortIcon("memory")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <For each={filtered()}>
-            {(p) => (
-              <tr>
-                <td class="proc-pid">{p.pid}</td>
-                <td class="proc-name" title={p.name}>{p.name}</td>
-                <td class="proc-cpu">{p.cpu.toFixed(1)}</td>
-                <td class="proc-mem">{formatSize(p.memory)}</td>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
+      <div class="proc-table-container">
+        <table class="proc-table">
+          <thead>
+            <tr>
+              <th onClick={() => toggleSort("pid")}>PID <SortIcon col="pid" /></th>
+              <th onClick={() => toggleSort("name")}>Process Name <SortIcon col="name" /></th>
+              <th onClick={() => toggleSort("cpu")}><Activity size={12} class="inline-icon" /> CPU % <SortIcon col="cpu" /></th>
+              <th onClick={() => toggleSort("memory")}><Cpu size={12} class="inline-icon" /> Memory <SortIcon col="memory" /></th>
+            </tr>
+          </thead>
+          <tbody>
+            <For each={filtered()}>
+              {(p) => (
+                <tr>
+                  <td class="file-meta-info" style="width: 80px;">{p.pid}</td>
+                  <td style="font-weight: 500;">{p.name}</td>
+                  <td style="width: 120px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="min-width: 35px;">{p.cpu.toFixed(1)}%</span>
+                      <div class="proc-cpu-bar" style="flex: 1;">
+                        <div class="proc-cpu-fill" style={{ width: `${Math.min(p.cpu, 100)}%` }}></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td class="file-meta-info" style="width: 120px;">{formatSize(p.memory)}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

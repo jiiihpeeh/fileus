@@ -1,0 +1,16 @@
+.app-terminal {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 1fr;
+  background: #000;
+  overflow: hidden;
+}
+
+.terminal-container {
+  padding: 8px;
+  min-height: 0;
+}
+
+.terminal-container .xterm {
+  height: 100%;
+}

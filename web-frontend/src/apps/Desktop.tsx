@@ -1,4 +1,12 @@
 import { createSignal, For, Show, onMount, onCleanup } from "solid-js";
+import { 
+  Folder, 
+  Terminal as TerminalIcon, 
+  Activity, 
+  FileText, 
+  Image as ImageIcon,
+  Cpu
+} from "lucide-solid";
 import { Window } from "../components/Window";
 import { FileBrowser } from "./FileBrowser";
 import { Terminal } from "./Terminal";
@@ -15,11 +23,11 @@ export const APP_IDS = {
 };
 
 export const APP_META = {
-  [APP_IDS.FILES]: { title: "Files", icon: "📁" },
-  [APP_IDS.TERMINAL]: { title: "Terminal", icon: "💻" },
-  [APP_IDS.PROCESSES]: { title: "Processes", icon: "🔄" },
-  [APP_IDS.EDITOR]: { title: "Editor", icon: "📝" },
-  [APP_IDS.IMAGE_VIEWER]: { title: "Image Viewer", icon: "🖼️" },
+  [APP_IDS.FILES]: { title: "Files", icon: Folder },
+  [APP_IDS.TERMINAL]: { title: "Terminal", icon: TerminalIcon },
+  [APP_IDS.PROCESSES]: { title: "Processes", icon: Activity },
+  [APP_IDS.EDITOR]: { title: "Editor", icon: FileText },
+  [APP_IDS.IMAGE_VIEWER]: { title: "Image Viewer", icon: ImageIcon },
 };
 
 interface WindowState {
@@ -85,22 +93,26 @@ export function Desktop() {
     <div class="desktop" onClick={() => setStartMenuOpen(false)}>
       <div class="desktop-icons">
         <For each={Object.entries(APP_META)}>
-          {([appId, meta]) => (
-            <div class="desktop-icon" onClick={() => openApp(appId)}>
-              <span class="icon-img">{meta.icon}</span>
-              <span class="icon-label">{meta.title}</span>
-            </div>
-          )}
+          {([appId, meta]) => {
+            const Icon = meta.icon;
+            return (
+              <div class="desktop-icon" onClick={() => openApp(appId)}>
+                <span class="icon-img"><Icon size={42} /></span>
+                <span class="icon-label">{meta.title}</span>
+              </div>
+            );
+          }}
         </For>
       </div>
 
       <For each={windows()}>
         {(win) => {
           const meta = APP_META[win.id as keyof typeof APP_META];
+          const Icon = meta.icon;
           return (
             <Window
               title={meta.title}
-              icon={meta.icon}
+              icon={<Icon size={16} />}
               minimized={win.minimized}
               onClose={() => closeWindow(win.id)}
               onMinimize={() => minimizeWindow(win.id)}
@@ -114,20 +126,21 @@ export function Desktop() {
 
       <div class="taskbar" onClick={(e) => e.stopPropagation()}>
         <button class="start-btn" onClick={() => setStartMenuOpen(!startMenuOpen())}>
-          <span class="start-icon">✦</span>
+          <span class="start-icon"><Cpu size={20} /></span>
         </button>
         
         <div class="taskbar-apps">
           <For each={windows()}>
             {(win) => {
               const meta = APP_META[win.id as keyof typeof APP_META];
+              const Icon = meta.icon;
               return (
                 <button
                   class={`taskbar-app ${win.minimized ? "minimized" : ""}`}
                   onClick={() => toggleWindow(win.id)}
                   title={win.minimized ? `Restore ${meta.title}` : meta.title}
                 >
-                  <span>{meta.icon}</span>
+                  <Icon size={18} />
                 </button>
               );
             }}
@@ -144,12 +157,15 @@ export function Desktop() {
       <Show when={startMenuOpen()}>
         <div class="start-menu" onClick={(e) => e.stopPropagation()}>
           <For each={Object.entries(APP_META)}>
-            {([appId, meta]) => (
-              <div class="start-menu-item" onClick={() => openApp(appId)}>
-                <span class="start-menu-icon">{meta.icon}</span>
-                <span class="start-menu-label">{meta.title}</span>
-              </div>
-            )}
+            {([appId, meta]) => {
+              const Icon = meta.icon;
+              return (
+                <div class="start-menu-item" onClick={() => openApp(appId)}>
+                  <Icon size={18} class="start-menu-icon" />
+                  <span class="start-menu-label">{meta.title}</span>
+                </div>
+              );
+            }}
           </For>
         </div>
       </Show>

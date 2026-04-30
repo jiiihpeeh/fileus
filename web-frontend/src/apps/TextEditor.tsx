@@ -1,6 +1,8 @@
 import { createSignal, Show } from "solid-js";
+import { FolderOpen, Save, FileText, CheckCircle } from "lucide-solid";
 import { apiRead, apiWrite } from "../api";
 import { FileDialog, SaveDialog } from "../components/Dialogs";
+import "./TextEditor.css";
 
 interface TextEditorProps {
   onClose: () => void;
@@ -14,7 +16,8 @@ export function TextEditor(_props: TextEditorProps) {
   const [showOpenDialog, setShowOpenDialog] = createSignal(false);
   const [showSaveDialog, setShowSaveDialog] = createSignal(false);
 
-  async function openFileCallback(filePath: string) {
+  async function openFileCallback(filePath: string | null) {
+    if (!filePath) return;
     try {
       const r = await apiRead(filePath);
       setPath(filePath);
@@ -53,7 +56,9 @@ export function TextEditor(_props: TextEditorProps) {
   return (
     <div class="app-editor">
       <Show when={notification()}>
-        <div class="app-notification">{notification()}</div>
+        <div class="app-notification" style="position: absolute; bottom: 40px; right: 20px;">
+          <CheckCircle size={14} class="inline-icon" /> {notification()}
+        </div>
       </Show>
       <Show when={showOpenDialog()}>
         <FileDialog title="Open File" onConfirm={openFileCallback} onCancel={() => setShowOpenDialog(false)} />
@@ -62,20 +67,30 @@ export function TextEditor(_props: TextEditorProps) {
         <SaveDialog initialPath={path()} onConfirm={saveFileCallback} onCancel={() => setShowSaveDialog(false)} />
       </Show>
       <div class="editor-toolbar">
-        <button class="btn-sm" onClick={() => setShowOpenDialog(true)}>📂 Open</button>
-        <button class="btn-sm btn-primary" onClick={handleSave}>💾 Save</button>
-        <button class="btn-sm" onClick={() => setShowSaveDialog(true)}>📄 Save As</button>
-        <span class="editor-path">{path() || "No file open"}</span>
-        <Show when={!saved()}>
-          <span class="unsaved">● unsaved</span>
-        </Show>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button class="btn-sm" onClick={() => setShowOpenDialog(true)}><FolderOpen size={14} /> Open</button>
+          <button class="btn-sm btn-primary" onClick={handleSave}><Save size={14} /> Save</button>
+          <button class="btn-sm" onClick={() => setShowSaveDialog(true)}><FileText size={14} /> Save As</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; flex: 1; justify-content: flex-end;">
+          <span class="path-display" style="max-width: 400px;">{path() || "No file open"}</span>
+          <Show when={!saved()}>
+            <span class="file-meta-info" style="color: var(--warning);">● unsaved</span>
+          </Show>
+        </div>
       </div>
-      <textarea
-        class="editor-textarea"
-        value={content()}
-        onInput={(e) => { setContent((e.target as HTMLTextAreaElement).value); setSaved(false); }}
-        placeholder="Open a file or start typing..."
-      />
+      <div class="editor-container">
+        <textarea
+          class="editor-textarea"
+          value={content()}
+          onInput={(e) => { setContent((e.target as HTMLTextAreaElement).value); setSaved(false); }}
+          placeholder="Open a file or start typing..."
+        />
+      </div>
+      <div class="editor-footer">
+        <span>Chars: {content().length}</span>
+        <span style="margin-left: 12px;">Lines: {content().split('\n').length}</span>
+      </div>
     </div>
   );
 }

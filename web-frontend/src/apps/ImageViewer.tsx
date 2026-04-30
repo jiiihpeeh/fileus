@@ -1,6 +1,8 @@
 import { createSignal, Show } from "solid-js";
+import { FolderOpen, ImageIcon, AlertTriangle, Loader2 } from "lucide-solid";
 import { FileDialog } from "../components/Dialogs";
 import { apiBinary } from "../api";
+import "./ImageViewer.css";
 
 interface ImageViewerProps {
   onClose: () => void;
@@ -47,32 +49,33 @@ export function ImageViewer(props: ImageViewerProps) {
 
   return (
     <div class="app-imageviewer" tabIndex={0}>
-      <div class="viewer-toolbar">
-        <button class="btn-sm" onClick={openImage}>📂 Open</button>
+      <div class="proc-toolbar">
+        <button class="btn-sm" onClick={openImage}><FolderOpen size={16} /> Open</button>
         <Show when={imagePath()}>
-          <span class="viewer-path">{imagePath()}</span>
+          <span class="path-display" style="flex: 1;">{imagePath()}</span>
         </Show>
       </div>
       <div class="viewer-body">
         <Show when={loading()}>
-          <div class="viewer-loading">Loading... {imagePath()}</div>
+          <div class="viewer-loading" style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
+            <Loader2 size={32} class="animate-spin" color="var(--accent)" />
+            <p>Loading... {imagePath()}</p>
+          </div>
         </Show>
         <Show when={error()}>
-          <div class="viewer-empty">
-            <span class="empty-icon">❌</span>
-            <p>{error()}</p>
+          <div class="viewer-empty" style="text-align: center;">
+            <AlertTriangle size={48} color="var(--danger)" style="margin-bottom: 16px;" />
+            <p style="margin-bottom: 16px;">{error()}</p>
             <button class="btn-sm btn-primary" onClick={openImage}>Try Again</button>
           </div>
         </Show>
         <Show when={imageUrl() && !loading()}>
-          <div class="viewer-image-container">
-            <img src={imageUrl()} alt={imagePath()} class="viewer-image" />
-          </div>
+          <img src={imageUrl()} alt={imagePath()} class="viewer-image" />
         </Show>
         <Show when={!imageUrl() && !loading() && !error()}>
-          <div class="viewer-empty">
-            <span class="empty-icon">🖼️</span>
-            <p>No image open</p>
+          <div class="viewer-empty" style="text-align: center;">
+            <ImageIcon size={64} color="var(--bg-tertiary)" style="margin-bottom: 16px;" />
+            <p style="margin-bottom: 16px; color: var(--text-secondary);">No image open</p>
             <button class="btn-sm btn-primary" onClick={openImage}>Open Image</button>
           </div>
         </Show>

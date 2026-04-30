@@ -1,8 +1,9 @@
 import { createSignal, JSX, Show } from "solid-js";
+import { X, Minus, Square, Copy } from "lucide-solid";
 
 interface WindowProps {
   title: string;
-  icon: string;
+  icon: JSX.Element;
   minimized?: boolean;
   onClose: () => void;
   onMinimize?: () => void;
@@ -123,13 +124,18 @@ export function Window(props: WindowProps) {
           class="window-header"
           onMouseDown={onHeaderMouseDown}
         >
-          <span>{props.icon} {props.title}</span>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            {props.icon}
+            <span class="window-title">{props.title}</span>
+          </div>
           <div class="window-controls">
-            <button class="win-btn win-min" onClick={props.onMinimize} title="Minimize">─</button>
+            <button class="win-btn win-min" onClick={props.onMinimize} title="Minimize"><Minus size={14} /></button>
             <button class="win-btn win-max" onClick={toggleMaximize} title={maximized() ? "Restore" : "Maximize"}>
-              {maximized() ? "❐" : "□"}
+              <Show when={maximized()} fallback={<Square size={12} />}>
+                <Copy size={12} />
+              </Show>
             </button>
-            <button class="win-btn win-close" onClick={props.onClose} title="Close">✕</button>
+            <button class="win-btn win-close" onClick={props.onClose} title="Close"><X size={14} /></button>
           </div>
         </div>
         <div class="window-body">
