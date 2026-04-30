@@ -1,7 +1,8 @@
 import { createSignal, Show } from "solid-js";
-import { FolderOpen, Save, FileText, CheckCircle } from "lucide-solid";
+import { FolderOpen, Save, FileText } from "lucide-solid";
 import { apiRead, apiWrite } from "../api";
 import { FileDialog, SaveDialog } from "../components/Dialogs";
+import { notificationStore } from "../notificationStore";
 import "./TextEditor.css";
 
 interface TextEditorProps {
@@ -12,7 +13,6 @@ export function TextEditor(_props: TextEditorProps) {
   const [path, setPath] = createSignal("");
   const [content, setContent] = createSignal("");
   const [saved, setSaved] = createSignal(true);
-  const [notification, setNotification] = createSignal("");
   const [showOpenDialog, setShowOpenDialog] = createSignal(false);
   const [showSaveDialog, setShowSaveDialog] = createSignal(false);
 
@@ -49,17 +49,11 @@ export function TextEditor(_props: TextEditorProps) {
   }
 
   function showNotification(msg: string) {
-    setNotification(msg);
-    setTimeout(() => setNotification(""), 2000);
+    notificationStore.showNotification(msg, 2000);
   }
 
   return (
     <div class="app-editor">
-      <Show when={notification()}>
-        <div class="app-notification" style="position: absolute; bottom: 40px; right: 20px;">
-          <CheckCircle size={14} class="inline-icon" /> {notification()}
-        </div>
-      </Show>
       <Show when={showOpenDialog()}>
         <FileDialog title="Open File" onConfirm={openFileCallback} onCancel={() => setShowOpenDialog(false)} />
       </Show>

@@ -6,7 +6,8 @@ import {
   FileText, 
   Image as ImageIcon,
   Cpu,
-  Settings as SettingsIcon
+  Settings as SettingsIcon,
+  CheckCircle
 } from "lucide-solid";
 import { Window } from "../components/Window";
 import { FileBrowser } from "./FileBrowser";
@@ -15,6 +16,8 @@ import { ProcessManager } from "./ProcessManager";
 import { TextEditor } from "./TextEditor";
 import { ImageViewer } from "./ImageViewer";
 import { Settings } from "./Settings";
+import { desktopStore } from "../desktopStore";
+import { notificationStore } from "../notificationStore";
 import { timeFormat, backgroundImage, loadBackground } from "../settings";
 
 export const APP_IDS = {
@@ -26,7 +29,7 @@ export const APP_IDS = {
   SETTINGS: "settings",
 };
 
-export const APP_META = {
+export const APP_META: Record<string, { title: string; icon: any }> = {
   [APP_IDS.FILES]: { title: "Files", icon: Folder },
   [APP_IDS.TERMINAL]: { title: "Terminal", icon: TerminalIcon },
   [APP_IDS.PROCESSES]: { title: "Processes", icon: Activity },
@@ -35,14 +38,7 @@ export const APP_META = {
   [APP_IDS.SETTINGS]: { title: "Settings", icon: SettingsIcon },
 };
 
-interface WindowState {
-  id: string;
-  minimized: boolean;
-}
-
 export function Desktop() {
-  const [windows, setWindows] = createSignal<WindowState[]>([]);
-  const [startMenuOpen, setStartMenuOpen] = createSignal(false);
   const [clock, setClock] = createSignal(new Date());
 
   onMount(() => {
@@ -51,36 +47,8 @@ export function Desktop() {
     onCleanup(() => clearInterval(timer));
   });
 
-  function openApp(appId: string) {
-    if (!windows().find(w => w.id === appId)) {
-      setWindows(prev => [...prev, { id: appId, minimized: false }]);
-    }
-    setStartMenuOpen(false);
-  }
-
-  function closeWindow(appId: string) {
-    setWindows(prev => prev.filter(w => w.id !== appId));
-  }
-
-  function minimizeWindow(appId: string) {
-    setWindows(prev => prev.map(w => w.id === appId ? { ...w, minimized: true } : w));
-  }
-
-  function restoreWindow(appId: string) {
-    setWindows(prev => prev.map(w => w.id === appId ? { ...w, minimized: false } : w));
-  }
-
-  function toggleWindow(appId: string) {
-    const win = windows().find(w => w.id === appId);
-    if (win?.minimized) {
-      restoreWindow(appId);
-    } else {
-      minimizeWindow(appId);
-    }
-  }
-
   function renderApp(appId: string) {
-    const close = () => closeWindow(appId);
+    const close = () => desktopStore.closeWindow(appId);
     switch (appId) {
       case APP_IDS.FILES: return <FileBrowser onClose={close} />;
       case APP_IDS.TERMINAL: return <Terminal onClose={close} />;
@@ -106,14 +74,20 @@ export function Desktop() {
       class="desktop"
       classList={{ "has-bg": !!backgroundImage() }}
       style={backgroundImage() ? { "--desktop-bg": `url(${backgroundImage()})` } as any : {}}
-      onClick={() => setStartMenuOpen(false)}
+      onClick={() => desktopStore.setStartMenuOpen(false)}
     >
+      <Show when={notificationStore.notification()}>
+        <div class="app-notification" style="position: fixed; bottom: 60px; right: 20px; z-index: 9999;">
+          <CheckCircle size={14} class="inline-icon" /> {notificationStore.notification()}
+        </div>
+      </Show>
+
       <div class="desktop-icons">
         <For each={Object.entries(APP_META)}>
           {([appId, meta]) => {
             const Icon = meta.icon;
             return (
-              <div class="desktop-icon" onClick={() => openApp(appId)}>
+              <div class="desktop-icon" onClick={() => desktopStore.openApp(appId)}>
                 <span class="icon-img"><Icon size={42} /></span>
                 <span class="icon-label">{meta.title}</span>
               </div>
@@ -122,18 +96,18 @@ export function Desktop() {
         </For>
       </div>
 
-      <For each={windows()}>
+      <For each={desktopStore.windows()}>
         {(win) => {
-          const meta = APP_META[win.id as keyof typeof APP_META];
+          const meta = APP_META[win.id];
           const Icon = meta.icon;
           return (
             <Window
               title={meta.title}
               icon={<Icon size={16} />}
               minimized={win.minimized}
-              onClose={() => closeWindow(win.id)}
-              onMinimize={() => minimizeWindow(win.id)}
-              onRestore={() => restoreWindow(win.id)}
+              onClose={() => desktopStore.closeWindow(win.id)}
+              onMinimize={() => desktopStore.minimizeWindow(win.id)}
+              onRestore={() => desktopStore.restoreWindow(win.id)}
             >
               {renderApp(win.id)}
             </Window>
@@ -142,19 +116,19 @@ export function Desktop() {
       </For>
 
       <div class="taskbar" onClick={(e) => e.stopPropagation()}>
-        <button class="start-btn" onClick={() => setStartMenuOpen(!startMenuOpen())}>
+        <button class="start-btn" onClick={() => desktopStore.setStartMenuOpen(!desktopStore.startMenuOpen())}>
           <span class="start-icon"><Cpu size={20} /></span>
         </button>
         
         <div class="taskbar-apps">
-          <For each={windows()}>
+          <For each={desktopStore.windows()}>
             {(win) => {
-              const meta = APP_META[win.id as keyof typeof APP_META];
+              const meta = APP_META[win.id];
               const Icon = meta.icon;
               return (
                 <button
                   class={`taskbar-app ${win.minimized ? "minimized" : ""}`}
-                  onClick={() => toggleWindow(win.id)}
+                  onClick={() => desktopStore.toggleWindow(win.id)}
                   title={win.minimized ? `Restore ${meta.title}` : meta.title}
                 >
                   <Icon size={18} />
@@ -171,13 +145,13 @@ export function Desktop() {
         </div>
       </div>
 
-      <Show when={startMenuOpen()}>
+      <Show when={desktopStore.startMenuOpen()}>
         <div class="start-menu" onClick={(e) => e.stopPropagation()}>
           <For each={Object.entries(APP_META)}>
             {([appId, meta]) => {
               const Icon = meta.icon;
               return (
-                <div class="start-menu-item" onClick={() => openApp(appId)}>
+                <div class="start-menu-item" onClick={() => desktopStore.openApp(appId)}>
                   <Icon size={18} class="start-menu-icon" />
                   <span class="start-menu-label">{meta.title}</span>
                 </div>

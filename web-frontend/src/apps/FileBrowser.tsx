@@ -23,6 +23,7 @@ import {
   X
 } from "lucide-solid";
 import { apiList, apiCreateDir, apiDelete, apiRename, apiCopy, apiMove, apiGetHome, apiGetDrives, apiDownload, formatSize, formatDate } from "../api";
+import { notificationStore } from "../notificationStore";
 import "./FileBrowser.css";
 
 interface ContextMenuItem {
@@ -65,7 +66,6 @@ export function FileBrowser(_props: FileBrowserProps) {
   const [newFolderName, setNewFolderName] = createSignal("");
   const [showCopyDest, setShowCopyDest] = createSignal(false);
   const [copyDestPath, setCopyDestPath] = createSignal("");
-  const [notification, setNotification] = createSignal("");
   const [showRename, setShowRename] = createSignal(false);
   const [renameName, setRenameName] = createSignal("");
   const [sortBy, setSortBy] = createSignal<"name" | "size" | "modified" | "owner" | "permissions">("name");
@@ -313,8 +313,7 @@ export function FileBrowser(_props: FileBrowserProps) {
   }
 
   function showNotification(msg: string) {
-    setNotification(msg);
-    setTimeout(() => setNotification(""), 2500);
+    notificationStore.showNotification(msg, 2500);
   }
 
   function handleContextMenu(e: MouseEvent, file: any) {
@@ -408,11 +407,7 @@ export function FileBrowser(_props: FileBrowserProps) {
 
   return (
     <div class="app-files" onClick={closeContextMenu}>
-      <Show when={notification()}>
-        <div class="app-notification">{notification()}</div>
-      </Show>
-
-      <Show when={contextMenu()}>
+      <Show when={contextMenu()}> 
         <div
           class="context-menu"
           style={{ left: `${contextMenu()!.x}px`, top: `${contextMenu()!.y}px` }}
