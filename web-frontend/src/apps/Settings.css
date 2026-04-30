@@ -1,0 +1,151 @@
+.app-settings {
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  background: var(--bg-secondary);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 24px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s;
+  min-width: 120px;
+}
+
+.settings-option:hover {
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+.settings-option.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
+.settings-option-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-option-desc {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.settings-option.active .settings-option-desc {
+  opacity: 0.8;
+}
+
+.settings-themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.settings-theme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.settings-theme-card:hover {
+  border-color: var(--accent);
+}
+
+.settings-theme-card.active {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+}
+
+.theme-swatches {
+  display: flex;
+  gap: 4px;
+}
+
+.swatch-primary, .swatch-secondary, .swatch-accent {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+[data-theme-preview="dark-red"] .swatch-primary { background: #1a1a2e; }
+[data-theme-preview="dark-red"] .swatch-secondary { background: #16213e; }
+[data-theme-preview="dark-red"] .swatch-accent { background: #e94560; }
+
+[data-theme-preview="dark-blue"] .swatch-primary { background: #0f172a; }
+[data-theme-preview="dark-blue"] .swatch-secondary { background: #1e293b; }
+[data-theme-preview="dark-blue"] .swatch-accent { background: #3b82f6; }
+
+[data-theme-preview="dark-purple"] .swatch-primary { background: #1a0a2e; }
+[data-theme-preview="dark-purple"] .swatch-secondary { background: #2d1b4e; }
+[data-theme-preview="dark-purple"] .swatch-accent { background: #a855f7; }
+
+[data-theme-preview="dark-green"] .swatch-primary { background: #0a1a0a; }
+[data-theme-preview="dark-green"] .swatch-secondary { background: #0f2e0f; }
+[data-theme-preview="dark-green"] .swatch-accent { background: #22c55e; }
+
+.settings-bg-preview {
+  width: 100%;
+  height: 120px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-bg-preview.has-bg {
+  border-color: var(--accent);
+}
+
+.settings-bg-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

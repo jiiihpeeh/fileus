@@ -5,7 +5,8 @@ import {
   Activity, 
   FileText, 
   Image as ImageIcon,
-  Cpu
+  Cpu,
+  Settings as SettingsIcon
 } from "lucide-solid";
 import { Window } from "../components/Window";
 import { FileBrowser } from "./FileBrowser";
@@ -13,6 +14,8 @@ import { Terminal } from "./Terminal";
 import { ProcessManager } from "./ProcessManager";
 import { TextEditor } from "./TextEditor";
 import { ImageViewer } from "./ImageViewer";
+import { Settings } from "./Settings";
+import { timeFormat, backgroundImage, loadBackground } from "../settings";
 
 export const APP_IDS = {
   FILES: "files",
@@ -20,6 +23,7 @@ export const APP_IDS = {
   PROCESSES: "processes",
   EDITOR: "editor",
   IMAGE_VIEWER: "image_viewer",
+  SETTINGS: "settings",
 };
 
 export const APP_META = {
@@ -28,6 +32,7 @@ export const APP_META = {
   [APP_IDS.PROCESSES]: { title: "Processes", icon: Activity },
   [APP_IDS.EDITOR]: { title: "Editor", icon: FileText },
   [APP_IDS.IMAGE_VIEWER]: { title: "Image Viewer", icon: ImageIcon },
+  [APP_IDS.SETTINGS]: { title: "Settings", icon: SettingsIcon },
 };
 
 interface WindowState {
@@ -41,6 +46,7 @@ export function Desktop() {
   const [clock, setClock] = createSignal(new Date());
 
   onMount(() => {
+    loadBackground();
     const timer = setInterval(() => setClock(new Date()), 1000);
     onCleanup(() => clearInterval(timer));
   });
@@ -81,16 +87,27 @@ export function Desktop() {
       case APP_IDS.PROCESSES: return <ProcessManager onClose={close} />;
       case APP_IDS.EDITOR: return <TextEditor onClose={close} />;
       case APP_IDS.IMAGE_VIEWER: return <ImageViewer onClose={close} />;
+      case APP_IDS.SETTINGS: return <Settings onClose={close} />;
       default: return null;
     }
   }
 
   function formatTime(date: Date) {
-    return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+    const is24h = timeFormat() === "24h";
+    return date.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: !is24h,
+    });
   }
 
   return (
-    <div class="desktop" onClick={() => setStartMenuOpen(false)}>
+    <div
+      class="desktop"
+      classList={{ "has-bg": !!backgroundImage() }}
+      style={backgroundImage() ? { "--desktop-bg": `url(${backgroundImage()})` } as any : {}}
+      onClick={() => setStartMenuOpen(false)}
+    >
       <div class="desktop-icons">
         <For each={Object.entries(APP_META)}>
           {([appId, meta]) => {

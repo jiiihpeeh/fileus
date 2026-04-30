@@ -1,9 +1,10 @@
 .app-editor {
   height: 100%;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
   overflow: hidden;
   background: var(--bg-secondary);
+  position: relative;
 }
 
 .editor-toolbar {
@@ -18,8 +19,6 @@
 }
 
 .editor-container {
-  display: grid;
-  grid-template-rows: 1fr;
   min-height: 0;
   position: relative;
 }

@@ -1,4 +1,4 @@
-import { createSignal, For, Show, onMount } from "solid-js";
+import { createSignal, createMemo, For, Show, onMount } from "solid-js";
 import { 
   Home, 
   ArrowUp, 
@@ -18,7 +18,9 @@ import {
   User,
   ShieldCheck,
   Eye,
-  EyeOff
+  EyeOff,
+  Plus,
+  X
 } from "lucide-solid";
 import { apiList, apiCreateDir, apiDelete, apiRename, apiCopy, apiMove, apiGetHome, apiGetDrives, apiDownload, formatSize, formatDate } from "../api";
 import "./FileBrowser.css";
@@ -31,15 +33,33 @@ interface ContextMenuItem {
   disabled?: boolean;
 }
 
+interface FileBrowserTab {
+  id: string;
+  currentDir: string;
+  files: any[];
+  selectedFile: any | null;
+  splitView: boolean;
+  splitDir: string;
+  splitFiles: any[];
+  activePane: "main" | "split";
+}
+
 interface FileBrowserProps {
   onClose: () => void;
   onOpenImage?: (path: string) => void;
 }
 
+let _tabId = 0;
+function newTabId() { return `tab_${++_tabId}`; }
+
+function createTab(id: string, dir = ""): FileBrowserTab {
+  return { id, currentDir: dir, files: [], selectedFile: null, splitView: false, splitDir: "", splitFiles: [], activePane: "main" };
+}
+
 export function FileBrowser(_props: FileBrowserProps) {
-  const [currentDir, setCurrentDir] = createSignal("");
-  const [files, setFiles] = createSignal<any[]>([]);
-  const [selectedFile, setSelectedFile] = createSignal<any>(null);
+  const firstTab = createTab(newTabId());
+  const [tabs, setTabs] = createSignal<FileBrowserTab[]>([firstTab]);
+  const [activeTabId, setActiveTabId] = createSignal(firstTab.id);
   const [drives, setDrives] = createSignal<any[]>([]);
   const [showNewFolder, setShowNewFolder] = createSignal(false);
   const [newFolderName, setNewFolderName] = createSignal("");
@@ -53,54 +73,85 @@ export function FileBrowser(_props: FileBrowserProps) {
   const [showHidden, setShowHidden] = createSignal(false);
   const [filterExt, setFilterExt] = createSignal("");
   const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; file: any } | null>(null);
-  const [splitView, setSplitView] = createSignal(false);
-  const [splitDir, setSplitDir] = createSignal("");
-  const [splitFiles, setSplitFiles] = createSignal<any[]>([]);
   const [dropTarget, setDropTarget] = createSignal<"main" | "split" | null>(null);
-  const [activePane, setActivePane] = createSignal<"main" | "split">("main");
+
+  const activeTab = createMemo(() => tabs().find(t => t.id === activeTabId())!);
+
+  function updateActiveTab(updates: Partial<FileBrowserTab>) {
+    setTabs(prev => prev.map(t => t.id === activeTabId() ? { ...t, ...updates } : t));
+  }
+
+  function switchTab(id: string) {
+    const tab = tabs().find(t => t.id === id);
+    if (tab) setActiveTabId(id);
+  }
+
+  async function addTab(dir?: string) {
+    const tab = createTab(newTabId(), dir || activeTab()?.currentDir || "/");
+    setTabs(prev => [...prev, tab]);
+    setActiveTabId(tab.id);
+    await loadTabDirectory(tab.id, dir || tab.currentDir);
+  }
+
+  function closeTab(id: string) {
+    if (tabs().length <= 1) return;
+    const idx = tabs().findIndex(t => t.id === id);
+    setTabs(prev => prev.filter(t => t.id !== id));
+    if (activeTabId() === id) {
+      const remaining = tabs().filter(t => t.id !== id);
+      const newIdx = Math.min(idx, remaining.length - 1);
+      setActiveTabId(remaining[newIdx].id);
+    }
+  }
+
+  async function loadTabDirectory(tabId: string, dir: string) {
+    try {
+      const resp = await apiList(dir);
+      setTabs(prev => prev.map(t => t.id === tabId ? { ...t, currentDir: dir, files: Array.isArray(resp.items) ? resp.items : [], selectedFile: null } : t));
+    } catch (err) { showNotification(`Error: ${err}`); }
+  }
+
+  async function loadTabSplitDirectory(tabId: string, dir: string) {
+    try {
+      const resp = await apiList(dir);
+      setTabs(prev => prev.map(t => t.id === tabId ? { ...t, splitDir: dir, splitFiles: Array.isArray(resp.items) ? resp.items : [] } : t));
+    } catch (err) { showNotification(`Error: ${err}`); }
+  }
 
   async function loadDrives() {
     try { setDrives(await apiGetDrives()); } catch {}
   }
 
-  async function loadDirectory(dir?: string) {
-    const targetDir = dir || currentDir() || "/";
-    try {
-      const resp = await apiList(targetDir);
-      setFiles(Array.isArray(resp.items) ? resp.items : []);
-      setCurrentDir(targetDir);
-      setSelectedFile(null);
-    } catch (err) { showNotification(`Error: ${err}`); }
-  }
-
   async function loadSplitDirectory(dir?: string) {
-    const targetDir = dir || splitDir() || "/";
-    try {
-      const resp = await apiList(targetDir);
-      setSplitFiles(Array.isArray(resp.items) ? resp.items : []);
-      setSplitDir(targetDir);
-    } catch (err) { showNotification(`Error: ${err}`); }
+    const tab = activeTab();
+    if (!tab) return;
+    await loadTabSplitDirectory(tab.id, dir || tab.splitDir || "/");
   }
 
   function toggleSplitView() {
-    if (splitView()) {
-      setSplitView(false);
+    const tab = activeTab();
+    if (!tab) return;
+    if (tab.splitView) {
+      updateActiveTab({ splitView: false });
     } else {
-      setSplitView(true);
-      setSplitDir(currentDir() || "/");
-      loadSplitDirectory(currentDir());
+      updateActiveTab({ splitView: true, splitDir: tab.currentDir || "/" });
+      loadSplitDirectory(tab.currentDir);
     }
   }
 
   function getActiveDir() {
-    return activePane() === "split" ? splitDir() : currentDir();
+    const tab = activeTab();
+    if (!tab) return "/";
+    return tab.activePane === "split" ? tab.splitDir : tab.currentDir;
   }
 
   async function navigateActive(path: string) {
-    if (activePane() === "split") {
-      await loadSplitDirectory(path);
+    const tab = activeTab();
+    if (!tab) return;
+    if (tab.activePane === "split") {
+      await loadTabSplitDirectory(tab.id, path);
     } else {
-      await loadDirectory(path);
+      await loadTabDirectory(tab.id, path);
     }
   }
 
@@ -159,39 +210,59 @@ export function FileBrowser(_props: FileBrowserProps) {
     else { setSortBy(col); setSortAsc(true); }
   }
 
-  async function navigateTo(path: string) { await loadDirectory(path); }
-  async function navigateSplitTo(path: string) { await loadSplitDirectory(path); }
+  async function navigateTo(path: string) {
+    const tab = activeTab();
+    if (tab) await loadTabDirectory(tab.id, path);
+  }
+  async function navigateSplitTo(path: string) {
+    const tab = activeTab();
+    if (tab) await loadTabSplitDirectory(tab.id, path);
+  }
   async function goHome() {
-    try { const home = await apiGetHome(); await loadDirectory(home.path); }
-    catch { await loadDirectory("/"); }
+    const tab = activeTab();
+    if (!tab) return;
+    try { const home = await apiGetHome(); await loadTabDirectory(tab.id, home.path); }
+    catch { await loadTabDirectory(tab.id, "/"); }
+  }
+
+  function tabTitle(tab: FileBrowserTab) {
+    if (!tab.currentDir || tab.currentDir === "/") return "/";
+    const parts = tab.currentDir.split("/").filter(Boolean);
+    return parts[parts.length - 1] || "/";
   }
 
   async function createNewFolder() {
     const name = newFolderName().trim();
     if (!name) return;
-    const path = currentDir() === "/" ? `/${name}` : `${currentDir()}/${name}`;
+    const tab = activeTab();
+    if (!tab) return;
+    const path = tab.currentDir === "/" ? `/${name}` : `${tab.currentDir}/${name}`;
     try {
       await apiCreateDir(path);
       setNewFolderName("");
       setShowNewFolder(false);
-      await loadDirectory();
+      await loadTabDirectory(tab.id, tab.currentDir);
       showNotification("Folder created");
     } catch (err) { showNotification(`Error: ${err}`); }
   }
 
   async function deleteFile() {
-    const file = selectedFile();
+    const tab = activeTab();
+    if (!tab) return;
+    const file = tab.selectedFile;
     if (!file || !confirm(`Delete "${file.name}"?`)) return;
     try {
       await apiDelete(file.path);
-      setSelectedFile(null);
-      await loadDirectory();
+      updateActiveTab({ selectedFile: null });
+      await loadTabDirectory(tab.id, tab.currentDir);
       showNotification("Deleted");
     } catch (err) { showNotification(`Error: ${err}`); }
   }
 
   async function renameFile() {
-    const file = selectedFile();
+    const tab = activeTab();
+    if (!tab) return;
+    const file = tab.selectedFile;
     if (!file) return;
     const newName = renameName().trim();
     if (!newName) return;
@@ -200,13 +271,15 @@ export function FileBrowser(_props: FileBrowserProps) {
     try {
       await apiRename(file.path, newPath);
       setShowRename(false);
-      await loadDirectory();
+      await loadTabDirectory(tab.id, tab.currentDir);
       showNotification("Renamed");
     } catch (err) { showNotification(`Error: ${err}`); }
   }
 
   async function copyFile(toMove = false) {
-    const file = selectedFile();
+    const tab = activeTab();
+    if (!tab) return;
+    const file = tab.selectedFile;
     if (!file) return;
     const dest = copyDestPath().trim();
     if (!dest) return;
@@ -216,7 +289,7 @@ export function FileBrowser(_props: FileBrowserProps) {
       else await apiCopy(file.path, destPath);
       setShowCopyDest(false);
       setCopyDestPath("");
-      if (toMove) await loadDirectory();
+      if (toMove) await loadTabDirectory(tab.id, tab.currentDir);
       showNotification(toMove ? "Moved" : "Copied");
     } catch (err) { showNotification(`Error: ${err}`); }
   }
@@ -224,18 +297,17 @@ export function FileBrowser(_props: FileBrowserProps) {
   async function handleDrop(e: DragEvent, target: "main" | "split") {
     const filePath = e.dataTransfer?.getData("text/plain");
     if (!filePath) return;
-    
-    const targetDir = target === "main" ? currentDir() : splitDir();
+    const tab = activeTab();
+    if (!tab) return;
+    const targetDir = target === "main" ? tab.currentDir : tab.splitDir;
     if (!targetDir) return;
-    
     const fileName = filePath.split("/").pop() || "";
     const destPath = targetDir === "/" ? `/${fileName}` : `${targetDir}/${fileName}`;
-    
     try {
       await apiMove(filePath, destPath);
       setDropTarget(null);
-      await loadDirectory();
-      if (splitView()) await loadSplitDirectory();
+      await loadTabDirectory(tab.id, tab.currentDir);
+      if (tab.splitView) await loadTabSplitDirectory(tab.id, tab.splitDir);
       showNotification("Moved");
     } catch (err) { showNotification(`Error: ${err}`); }
   }
@@ -247,7 +319,7 @@ export function FileBrowser(_props: FileBrowserProps) {
 
   function handleContextMenu(e: MouseEvent, file: any) {
     e.preventDefault();
-    setSelectedFile(file);
+    updateActiveTab({ selectedFile: file });
     setContextMenu({ x: e.clientX, y: e.clientY, file });
   }
 
@@ -264,6 +336,7 @@ export function FileBrowser(_props: FileBrowserProps) {
     const items: ContextMenuItem[] = [];
     if (file.is_dir) {
       items.push({ label: "Open", icon: Folder, action: () => navigateTo(file.path) });
+      items.push({ label: "Open in New Tab", icon: Plus, action: () => addTab(file.path) });
       items.push({ label: "Download as ZIP", icon: Download, action: () => apiDownload(file.path) });
       items.push({ label: "", action: () => {} });
     } else {
@@ -276,15 +349,26 @@ export function FileBrowser(_props: FileBrowserProps) {
     }
     items.push(
       { label: "Rename", icon: Pencil, action: () => { setShowRename(true); setRenameName(file.name); } },
-      { label: "Copy", icon: Copy, action: () => { setShowCopyDest(true); setCopyDestPath(currentDir()); setSelectedFile(file); } },
-      { label: "Move", icon: ExternalLink, action: () => { setShowCopyDest(true); setCopyDestPath(currentDir()); setSelectedFile(file); } },
+      { label: "Copy", icon: Copy, action: () => { setShowCopyDest(true); setCopyDestPath(activeTab()?.currentDir || "/"); updateActiveTab({ selectedFile: file }); } },
+      { label: "Move", icon: ExternalLink, action: () => { setShowCopyDest(true); setCopyDestPath(activeTab()?.currentDir || "/"); updateActiveTab({ selectedFile: file }); } },
       { label: "", action: () => {} },
-      { label: "Delete", icon: Trash2, action: () => { setSelectedFile(file); deleteFile(); }, danger: true }
+      { label: "Delete", icon: Trash2, action: () => { updateActiveTab({ selectedFile: file }); deleteFile(); }, danger: true }
     );
     return items;
   }
 
-  onMount(async () => { await loadDrives(); await goHome(); });
+  onMount(async () => {
+    await loadDrives();
+    const tab = activeTab();
+    if (tab) {
+      try {
+        const home = await apiGetHome();
+        await loadTabDirectory(tab.id, home.path);
+      } catch {
+        await loadTabDirectory(tab.id, "/");
+      }
+    }
+  });
 
   const FileGridHeader = () => (
     <div class="files-grid-header">
@@ -297,27 +381,30 @@ export function FileBrowser(_props: FileBrowserProps) {
     </div>
   );
 
-  const FileRow = (props: { file: any, pane: "main" | "split" }) => (
-    <div
-      class={`files-grid-row ${selectedFile()?.path === props.file.path ? "selected" : ""} ${props.file.is_dir ? "folder" : "file"} ${isHidden(props.file) ? "hidden" : ""}`}
-      draggable={true}
-      onDragStart={(e) => { e.dataTransfer?.setData("text/plain", props.file.path); }}
-      onClick={(e) => { e.stopPropagation(); setSelectedFile(props.file); setActivePane(props.pane); }}
-      onDblClick={() => props.file.is_dir ? (props.pane === "main" ? navigateTo(props.file.path) : navigateSplitTo(props.file.path)) : isImage(props.file) ? _props.onOpenImage?.(props.file.path) : null}
-      onContextMenu={(e) => handleContextMenu(e, props.file)}
-    >
-      <div class="file-icon-cell">
-        <Show when={props.file.is_dir} fallback={isImage(props.file) ? <Image size={18} /> : <File size={18} />}>
-          <Folder size={18} />
-        </Show>
+  const FileRow = (props: { file: any; pane: "main" | "split" }) => {
+    const tab = activeTab();
+    return (
+      <div
+        class={`files-grid-row ${tab?.selectedFile?.path === props.file.path ? "selected" : ""} ${props.file.is_dir ? "folder" : "file"} ${isHidden(props.file) ? "hidden" : ""}`}
+        draggable={true}
+        onDragStart={(e) => { e.dataTransfer?.setData("text/plain", props.file.path); }}
+        onClick={(e) => { e.stopPropagation(); updateActiveTab({ selectedFile: props.file, activePane: props.pane }); }}
+        onDblClick={() => props.file.is_dir ? (props.pane === "main" ? navigateTo(props.file.path) : navigateSplitTo(props.file.path)) : isImage(props.file) ? _props.onOpenImage?.(props.file.path) : null}
+        onContextMenu={(e) => handleContextMenu(e, props.file)}
+      >
+        <div class="file-icon-cell">
+          <Show when={props.file.is_dir} fallback={isImage(props.file) ? <Image size={18} /> : <File size={18} />}>
+            <Folder size={18} />
+          </Show>
+        </div>
+        <div title={props.file.name}>{props.file.name}</div>
+        <div class="file-meta-info">{props.file.is_dir ? "-" : formatSize(props.file.size)}</div>
+        <div class="file-meta-info">{props.file.owner || "-"}</div>
+        <div class="file-meta-info">{props.file.permissions || "-"}</div>
+        <div class="file-meta-info">{formatDate(props.file.modified)}</div>
       </div>
-      <div title={props.file.name}>{props.file.name}</div>
-      <div class="file-meta-info">{props.file.is_dir ? "-" : formatSize(props.file.size)}</div>
-      <div class="file-meta-info">{props.file.owner || "-"}</div>
-      <div class="file-meta-info">{props.file.permissions || "-"}</div>
-      <div class="file-meta-info">{formatDate(props.file.modified)}</div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div class="app-files" onClick={closeContextMenu}>
@@ -349,11 +436,36 @@ export function FileBrowser(_props: FileBrowserProps) {
         </div>
       </Show>
 
+      <div class="files-tab-bar">
+        <For each={tabs()}>
+          {(tab) => (
+            <div
+              class={`files-tab ${tab.id === activeTabId() ? "active" : ""}`}
+              onClick={() => switchTab(tab.id)}
+            >
+              <Folder size={14} />
+              <span>{tabTitle(tab)}</span>
+              <Show when={tabs().length > 1}>
+                <span
+                  class="files-tab-close"
+                  onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                >
+                  <X size={14} />
+                </span>
+              </Show>
+            </div>
+          )}
+        </For>
+        <div class="files-tab-add" onClick={() => addTab()} title="New Tab">
+          <Plus size={16} />
+        </div>
+      </div>
+
       <div class="files-toolbar">
         <button class="btn-sm" onClick={goHomeActive} title="Home"><Home size={16} /></button>
         <button class="btn-sm" onClick={navigateUpActive} title="Up"><ArrowUp size={16} /></button>
         <button class="btn-sm" onClick={() => navigateActive(getActiveDir())} title="Refresh"><RefreshCw size={16} /></button>
-        <button class={`btn-sm ${splitView() ? "active" : ""}`} onClick={toggleSplitView} title="Split View"><Columns2 size={16} /></button>
+        <button class={`btn-sm ${activeTab()?.splitView ? "active" : ""}`} onClick={toggleSplitView} title="Split View"><Columns2 size={16} /></button>
         <span class="path-display">{getActiveDir() || "/"}</span>
         <button class="btn-sm" onClick={() => setShowNewFolder(true)} title="New Folder"><FolderPlus size={16} /> Folder</button>
         <span class="toolbar-sep">|</span>
@@ -418,11 +530,11 @@ export function FileBrowser(_props: FileBrowserProps) {
             </div>
           </Show>
 
-          <div class="files-list" classList={{ "is-split": splitView() }}>
+          <div class="files-list" classList={{ "is-split": activeTab()?.splitView ?? false }}>
             <div 
               class="files-list-pane" 
-              classList={{ "drop-target": dropTarget() === "main", "active-pane": activePane() === "main" }}
-              onClick={() => setActivePane("main")}
+              classList={{ "drop-target": dropTarget() === "main", "active-pane": activeTab()?.activePane === "main" }}
+              onClick={() => updateActiveTab({ activePane: "main" })}
               onDragOver={(e) => { e.preventDefault(); setDropTarget("main"); }}
               onDragLeave={() => setDropTarget(null)}
               onDrop={(e) => { e.preventDefault(); handleDrop(e, "main"); }}
@@ -430,18 +542,18 @@ export function FileBrowser(_props: FileBrowserProps) {
               <div class="files-scroll-area">
                 <div class="files-grid">
                   <FileGridHeader />
-                  <For each={sortedFiltered(files())}>
+                  <For each={sortedFiltered(activeTab()?.files ?? [])}>
                     {(file) => <FileRow file={file} pane="main" />}
                   </For>
                 </div>
               </div>
             </div>
 
-            <Show when={splitView()}>
+            <Show when={activeTab()?.splitView}>
               <div 
                 class="files-list-pane" 
-                classList={{ "drop-target": dropTarget() === "split", "active-pane": activePane() === "split" }}
-                onClick={() => setActivePane("split")}
+                classList={{ "drop-target": dropTarget() === "split", "active-pane": activeTab()?.activePane === "split" }}
+                onClick={() => updateActiveTab({ activePane: "split" })}
                 onDragOver={(e) => { e.preventDefault(); setDropTarget("split"); }}
                 onDragLeave={() => setDropTarget(null)}
                 onDrop={(e) => { e.preventDefault(); handleDrop(e, "split"); }}
@@ -449,7 +561,7 @@ export function FileBrowser(_props: FileBrowserProps) {
                 <div class="files-scroll-area">
                   <div class="files-grid">
                     <FileGridHeader />
-                    <For each={sortedFiltered(splitFiles())}>
+                    <For each={sortedFiltered(activeTab()?.splitFiles ?? [])}>
                       {(file) => <FileRow file={file} pane="split" />}
                     </For>
                   </div>
@@ -458,19 +570,19 @@ export function FileBrowser(_props: FileBrowserProps) {
             </Show>
           </div>
 
-          <Show when={selectedFile()}>
+          <Show when={activeTab()?.selectedFile}>
             <div class="files-details">
               <div class="details-info">
-                <strong>Name:</strong> <span>{selectedFile()?.name}</span>
-                <strong>Path:</strong> <span>{selectedFile()?.path}</span>
-                <strong>Size:</strong> <span>{selectedFile()?.is_dir ? "-" : formatSize(selectedFile()?.size)}</span>
-                <strong>Modified:</strong> <span>{formatDate(selectedFile()?.modified)}</span>
+                <strong>Name:</strong> <span>{activeTab()?.selectedFile?.name}</span>
+                <strong>Path:</strong> <span>{activeTab()?.selectedFile?.path}</span>
+                <strong>Size:</strong> <span>{activeTab()?.selectedFile?.is_dir ? "-" : formatSize(activeTab()?.selectedFile?.size)}</span>
+                <strong>Modified:</strong> <span>{formatDate(activeTab()?.selectedFile?.modified)}</span>
               </div>
               <div class="details-actions">
-                <button class="btn-sm" onClick={() => { setShowRename(true); setRenameName(selectedFile()!.name); }}>Rename</button>
+                <button class="btn-sm" onClick={() => { setShowRename(true); setRenameName(activeTab()!.selectedFile!.name); }}>Rename</button>
                 <button class="btn-sm" onClick={() => setShowCopyDest(true)}>Copy/Move</button>
                 <button class="btn-sm btn-danger" onClick={deleteFile}>Delete</button>
-                <button class="btn-sm" onClick={() => setSelectedFile(null)}>Close</button>
+                <button class="btn-sm" onClick={() => updateActiveTab({ selectedFile: null })}>Close</button>
               </div>
             </div>
           </Show>

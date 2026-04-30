@@ -207,7 +207,12 @@ export async function apiList(dir: string): Promise<ListResponse> {
 }
 
 export async function apiRead(path: string): Promise<ReadResponse> {
-  return encryptedRequest("/api/files/read", { path });
+  const r = await encryptedRequest<ReadResponse>("/api/files/read", { path });
+  if (r.binary && r.content) {
+    const bytes = Uint8Array.from(atob(r.content), c => c.charCodeAt(0));
+    r.content = new TextDecoder().decode(bytes);
+  }
+  return r;
 }
 
 export async function apiInfo(path: string): Promise<InfoResponse> {

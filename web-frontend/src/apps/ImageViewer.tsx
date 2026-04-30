@@ -49,11 +49,11 @@ export function ImageViewer(props: ImageViewerProps) {
 
   return (
     <div class="app-imageviewer" tabIndex={0}>
-      <div class="proc-toolbar">
-        <button class="btn-sm" onClick={openImage}><FolderOpen size={16} /> Open</button>
+      <div class="proc-toolbar img-toolbar">
         <Show when={imagePath()}>
-          <span class="path-display" style="flex: 1;">{imagePath()}</span>
+          <span class="path-display">{imagePath()}</span>
         </Show>
+        <button class="btn-sm" onClick={openImage}><FolderOpen size={16} /> Open</button>
       </div>
       <div class="viewer-body">
         <Show when={loading()}>

@@ -1,5 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
-import { X, Home, ArrowUp, Folder, File, Save, FolderOpen } from "lucide-solid";
+import { X, Home, ArrowUp, Folder, File, Save, FolderOpen, Eye, EyeOff } from "lucide-solid";
 import { apiList, apiGetHome, apiGetDrives, formatSize } from "../api";
 import "./Dialogs.css";
 
@@ -17,11 +17,14 @@ export function FileDialog(props: FileDialogProps) {
   const [files, setFiles] = createSignal<any[]>([]);
   const [selectedFile, setSelectedFile] = createSignal<any>(null);
   const [filename, setFilename] = createSignal("");
+  const [showHidden, setShowHidden] = createSignal(false);
 
   async function loadDirectory(dir: string) {
     try {
       const resp = await apiList(dir);
-      setFiles((resp.items || []).filter((f: any) => !f.name.startsWith(".")));
+      let items = resp.items || [];
+      if (!showHidden()) items = items.filter((f: any) => !f.name.startsWith("."));
+      setFiles(items);
       setCurrentDir(dir);
       setSelectedFile(null);
     } catch {}
@@ -115,6 +118,16 @@ export function FileDialog(props: FileDialogProps) {
                 </For>
               </div>
             </div>
+            <button
+              class="btn-sm"
+              style="flex-shrink: 0;"
+              onClick={() => { setShowHidden(!showHidden()); loadDirectory(currentDir()); }}
+              title={showHidden() ? "Hide Hidden Files" : "Show Hidden Files"}
+            >
+              <Show when={showHidden()} fallback={<EyeOff size={14} />}>
+                <Eye size={14} />
+              </Show>
+            </button>
           </div>
           <div class="file-dialog-list" style="height: 250px; overflow-y: auto; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px;">
             <For each={files()}>
