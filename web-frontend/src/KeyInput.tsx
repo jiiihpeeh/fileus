@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createSignal, For } from "solid-js";
 import "./styles.css";
 
 export default function KeyInput(props: { onComplete: (key: string) => void }) {
@@ -33,16 +33,16 @@ export default function KeyInput(props: { onComplete: (key: string) => void }) {
 
   return (
     <div class="key-slots">
-      {chars().map((c, i) => (
+      <For each={chars()}>{(c, i) =>
         <input
           class="key-char-input"
           type="text"
           maxLength={1}
           value={c}
-          onInput={(e) => handleInput(i, (e.target as HTMLInputElement).value)}
+          onInput={(e) => handleInput(i(), (e.target as HTMLInputElement).value)}
           onPaste={handlePaste}
         />
-      ))}
+      }</For>
     </div>
   );
 }
