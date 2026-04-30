@@ -1,5 +1,6 @@
 import { createSignal, For, Show, onMount } from "solid-js";
 import { apiList, apiCreateDir, apiDelete, apiRename, apiCopy, apiMove, apiGetHome, apiGetDrives, apiDownload, formatSize, formatDate } from "../api";
+import "./FileBrowser.css";
 
 interface ContextMenuItem {
   label: string;
@@ -385,7 +386,7 @@ export function FileBrowser(_props: FileBrowserProps) {
             </div>
           </Show>
 
-          <div class="files-list">
+          <div class="files-list" classList={{ "is-split": splitView() }}>
             <div 
               class="files-list-pane" 
               classList={{ "drop-target": dropTarget() === "main", "active-pane": activePane() === "main" }}
@@ -413,7 +414,7 @@ export function FileBrowser(_props: FileBrowserProps) {
                 onDragLeave={() => setDropTarget(null)}
                 onDrop={(e) => { e.preventDefault(); handleDrop(e, "split"); }}
               >
-                <div class="files-scroll-area" style="border-left: 1px solid var(--border)">
+                <div class="files-scroll-area">
                   <div class="files-grid">
                     <FileGridHeader />
                     <For each={sortedFiltered(splitFiles())}>
