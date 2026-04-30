@@ -23,13 +23,13 @@ export function generateNewKey(): string {
 }
 
 async function compressGzip(data: Uint8Array): Promise<Uint8Array> {
-  const stream = new Response(data).body!.pipeThrough(new CompressionStream('gzip'));
+  const stream = new Response(data as unknown as BodyInit).body!.pipeThrough(new CompressionStream('gzip'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 async function decompressGzip(data: Uint8Array | ArrayBuffer): Promise<Uint8Array> {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-  const stream = new Response(bytes).body!.pipeThrough(new DecompressionStream('gzip'));
+  const stream = new Response(bytes as unknown as BodyInit).body!.pipeThrough(new DecompressionStream('gzip'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 

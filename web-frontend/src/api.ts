@@ -285,7 +285,7 @@ export async function apiBinary(path: string): Promise<Blob> {
   
   const elapsed = Math.round(performance.now() - startTime);
   console.debug(`[API] ← /api/files/binary (${elapsed}ms)`, { size: decrypted.length });
-  return new Blob([decrypted]);
+  return new Blob([new Uint8Array(decrypted)]);
 }
 
 export async function apiDownload(path: string): Promise<void> {
@@ -384,7 +384,7 @@ export async function apiDownloadChunked(
       chunkIndex: meta.chunk_index,
       totalChunks: meta.total_chunks,
       fileSize: meta.file_size,
-      data: payload.buffer,
+      data: payload.slice(0).buffer,
     });
     
     console.debug(`[API] chunk ${i + 1}/${totalChunks} stored`, { chunk_size: meta.chunk_size });

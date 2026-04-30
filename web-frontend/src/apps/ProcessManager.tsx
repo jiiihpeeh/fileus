@@ -1,4 +1,4 @@
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createSignal, For, onMount } from "solid-js";
 import { RefreshCw, Search, Cpu, Activity, LayoutList } from "lucide-solid";
 import { apiGetProcesses, formatSize } from "../api";
 import "./ProcessManager.css";
