@@ -152,7 +152,11 @@ pub fn handle_files_list(body: &[u8]) -> Vec<u8> {
             }
             a.name.to_lowercase().cmp(&b.name.to_lowercase())
         });
-        rmp_serde::to_vec(&items)
+        #[derive(serde::Serialize)]
+        struct ListResponse {
+            items: Vec<FileEntry>,
+        }
+        rmp_serde::encode::to_vec_named(&ListResponse { items })
             .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
@@ -184,7 +188,7 @@ pub fn handle_files_info(body: &[u8]) -> Vec<u8> {
             owner,
             permissions,
         };
-        rmp_serde::to_vec(&entry)
+        rmp_serde::encode::to_vec_named(&entry)
             .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }
@@ -212,7 +216,7 @@ pub fn handle_files_search(body: &[u8]) -> Vec<u8> {
         let pattern = parsed.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
         validate_path(dir).map_err(ApiError::from)?;
         let results = search_files(Path::new(dir), pattern);
-        rmp_serde::to_vec(&results)
+        rmp_serde::encode::to_vec_named(&results)
             .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }

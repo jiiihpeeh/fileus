@@ -98,6 +98,12 @@ export async function decryptApiBinaryResponse(
   const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, key, ciphertext);
   
   const decoded = decode(new Uint8Array(plaintext)) as any;
+  if (Array.isArray(decoded)) {
+    return {
+      metadata: decoded[1],
+      payload: new Uint8Array(decoded[2]),
+    };
+  }
   return {
     metadata: decoded.metadata,
     payload: new Uint8Array(decoded.payload),

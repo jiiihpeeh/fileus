@@ -103,7 +103,7 @@ pub fn handle_system_processes(body: &[u8]) -> Vec<u8> {
                 .partial_cmp(&a_cpu)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        rmp_serde::to_vec(&processes)
+        rmp_serde::encode::to_vec_named(&processes)
             .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))
     })
 }

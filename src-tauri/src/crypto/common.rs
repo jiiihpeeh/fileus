@@ -64,7 +64,7 @@ pub fn encrypt_api_response_raw(response_data: &[u8]) -> Option<Vec<u8>> {
     struct DataResponse<'a> {
         data: &'a [u8],
     }
-    rmp_serde::to_vec(&DataResponse { data: &combined }).ok()
+    rmp_serde::encode::to_vec_named(&DataResponse { data: &combined }).ok()
 }
 
 pub fn encrypt_api_binary_response_simple(binary_data: &[u8]) -> Option<Vec<u8>> {
