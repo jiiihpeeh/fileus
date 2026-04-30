@@ -2,8 +2,12 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use ring::digest::{digest, SHA256};
 use ring::rand::{SecureRandom, SystemRandom};
+use std::io::{Read, Write};
 
 use crate::shared::{SESSION_NEW_KEY, SHARED_KEY};
 
@@ -30,7 +34,13 @@ pub fn decrypt_api_data_raw(data: &[u8]) -> Option<Vec<u8>> {
     let plaintext = cipher.decrypt(nonce, ciphertext).ok()?;
 
     let decoded: (String, Vec<u8>) = rmp_serde::from_slice(&plaintext).ok()?;
-    Some(decoded.1)
+
+    // Decompress the payload
+    let mut decoder = GzDecoder::new(&decoded.1[..]);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed).ok()?;
+
+    Some(decompressed)
 }
 
 /// Encrypt API response to raw bytes (no base64).
@@ -42,6 +52,11 @@ pub fn encrypt_api_response_raw(response_data: &[u8]) -> Option<Vec<u8>> {
     }
     let key = &*new_key;
 
+    // Compress the payload
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(response_data).ok()?;
+    let compressed = encoder.finish().ok()?;
+
     let key_hash = digest(&SHA256, key.as_bytes());
     let cipher = Aes256Gcm::new_from_slice(key_hash.as_ref()).ok()?;
 
@@ -50,7 +65,7 @@ pub fn encrypt_api_response_raw(response_data: &[u8]) -> Option<Vec<u8>> {
     rng.fill(&mut nonce_bytes).ok()?;
 
     let salt = generate_random_string(random_len(49, 87));
-    let payload_buf = rmp_serde::to_vec(&(salt, response_data)).ok()?;
+    let payload_buf = rmp_serde::to_vec(&(salt, compressed)).ok()?;
 
     let nonce_iv = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher.encrypt(nonce_iv, payload_buf.as_ref()).ok()?;
@@ -74,6 +89,11 @@ pub fn encrypt_api_binary_response_simple(binary_data: &[u8]) -> Option<Vec<u8>>
     }
     let key = &*new_key;
 
+    // Compress the payload
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(binary_data).ok()?;
+    let compressed = encoder.finish().ok()?;
+
     let key_hash = digest(&SHA256, key.as_bytes());
 
     let cipher = Aes256Gcm::new_from_slice(key_hash.as_ref()).ok()?;
@@ -83,7 +103,7 @@ pub fn encrypt_api_binary_response_simple(binary_data: &[u8]) -> Option<Vec<u8>>
     rng.fill(&mut nonce_bytes).ok()?;
 
     let nonce_iv = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce_iv, binary_data).ok()?;
+    let ciphertext = cipher.encrypt(nonce_iv, compressed.as_ref()).ok()?;
 
     let mut combined = Vec::with_capacity(12 + ciphertext.len());
     combined.extend_from_slice(&nonce_bytes);
@@ -111,8 +131,12 @@ pub fn encrypt_api_binary_response(metadata: &rmpv::Value, binary_data: &[u8]) -
 
     let payload_buf = rmp_serde::to_vec(&(salt, metadata, binary_data)).ok()?;
 
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&payload_buf).ok()?;
+    let compressed = encoder.finish().ok()?;
+
     let nonce_iv = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce_iv, payload_buf.as_ref()).ok()?;
+    let ciphertext = cipher.encrypt(nonce_iv, compressed.as_ref()).ok()?;
 
     let mut combined = Vec::with_capacity(12 + ciphertext.len());
     combined.extend_from_slice(&nonce_bytes);

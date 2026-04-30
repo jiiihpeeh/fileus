@@ -22,6 +22,17 @@ export function generateNewKey(): string {
   return generateRandomString(32, charset);
 }
 
+async function compressGzip(data: Uint8Array): Promise<Uint8Array> {
+  const stream = new Response(data).body!.pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function decompressGzip(data: Uint8Array | ArrayBuffer): Promise<Uint8Array> {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const stream = new Response(bytes).body!.pipeThrough(new DecompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
 export async function encryptSession(
   newKey: string,
   sharedKey: string
@@ -32,6 +43,7 @@ export async function encryptSession(
   const key = await crypto.subtle.importKey("raw", hash, "AES-GCM", false, ["encrypt"]);
 
   const nonce = crypto.getRandomValues(new Uint8Array(12));
+  // Session handshake does NOT use gzip
   const msgpack_data = encode([salt, newKey]);
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, msgpack_data);
 
@@ -66,20 +78,27 @@ export async function decryptApiMessage(
     ciphertext
   );
 
-  const decryptedBytes = new Uint8Array(decryptedBuffer);
-  const decoded = decode(decryptedBytes) as any;
+  const decoded = decode(new Uint8Array(decryptedBuffer)) as any;
 
   console.debug("[CRYPTO] decoded:", decoded);
   
-  let result: Uint8Array;
+  let compressedPayload: any;
   if (Array.isArray(decoded)) {
-    result = decoded[1];
+    compressedPayload = decoded[1];
   } else {
-    result = decoded.payload || decoded;
+    compressedPayload = decoded.payload || decoded;
   }
   
-  console.debug("[CRYPTO] payload bytes:", result.length);
-  return result;
+  // Ensure we have a Uint8Array for decompression
+  const compressedBytes = compressedPayload instanceof Uint8Array 
+    ? compressedPayload 
+    : new Uint8Array(compressedPayload);
+
+  // Decompress the payload
+  const decompressed = await decompressGzip(compressedBytes);
+  
+  console.debug("[CRYPTO] decompressed bytes:", decompressed.length);
+  return decompressed;
 }
 
 export async function decryptApiBinaryResponse(
@@ -97,7 +116,10 @@ export async function decryptApiBinaryResponse(
   
   const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, key, ciphertext);
   
-  const decoded = decode(new Uint8Array(plaintext)) as any;
+  // Decompress the whole thing
+  const decompressed = await decompressGzip(new Uint8Array(plaintext));
+  
+  const decoded = decode(decompressed) as any;
   if (Array.isArray(decoded)) {
     return {
       metadata: decoded[1],
@@ -125,7 +147,10 @@ export async function decryptApiBinarySimple(
   
   const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, key, ciphertext);
   
-  return new Uint8Array(plaintext);
+  // Decompress
+  const decompressed = await decompressGzip(new Uint8Array(plaintext));
+  
+  return decompressed;
 }
 
 /// Encrypt API message to raw bytes (no base64).
@@ -139,8 +164,11 @@ export async function encryptApiMessage(
   const hash = await crypto.subtle.digest("SHA-256", keyData);
   const key = await crypto.subtle.importKey("raw", hash, "AES-GCM", false, ["encrypt"]);
 
+  // Compress payload
+  const compressedPayload = await compressGzip(payload);
+
   const nonce = crypto.getRandomValues(new Uint8Array(12));
-  const msgpack_data = encode([salt, payload]);
+  const msgpack_data = encode([salt, compressedPayload]);
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, msgpack_data);
 
   const combined = new Uint8Array(nonce.length + ciphertext.byteLength);
