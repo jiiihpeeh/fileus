@@ -1,7 +1,21 @@
 import { createSignal, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import Window from "./components/Window";
-import "./App.css";
+import "./styles/themes.css";
+import "./styles/base.css";
+import "./styles/components.css";
+
+function loadTheme(): string {
+  try {
+    const v = localStorage.getItem("fileus-theme");
+    return v ? JSON.parse(v) : "dark-red";
+  } catch {
+    return "dark-red";
+  }
+}
+
+const initialTheme = loadTheme();
+document.documentElement.setAttribute("data-theme", initialTheme);
 
 function App() {
   const [greetMsg, setGreetMsg] = createSignal("");
@@ -126,11 +140,16 @@ function App() {
           <p><strong>HTTP:</strong> <a href={`http://localhost:${serverPort()}`} target="_blank" rel="noopener noreferrer">{`http://localhost:${serverPort()}`}</a></p>
           <p><strong>API Health:</strong> <a href={`http://localhost:${serverPort()}/api/health`} target="_blank" rel="noopener noreferrer">/api/health</a></p>
           <p><strong>API Greet:</strong> <a href={`http://localhost:${serverPort()}/api/greet?name=Tauri`} target="_blank" rel="noopener noreferrer">/api/greet?name=Tauri</a></p>
-          <p><strong>Status:</strong> <span style={serverStatus() === "Running" ? {color: "#86efac"} : {color: "#f87171"}}>{serverStatus()}</span></p>
+          <p>
+            <strong>Status:</strong>{" "}
+            <span class="status-text" classList={{ on: serverStatus() === "Running", off: serverStatus() !== "Running" }}>
+              {serverStatus()}
+            </span>
+          </p>
           {connected() ? (
-            <p style={{color: "#86efac"}}>Connected</p>
+            <p class="connected-text">Connected</p>
           ) : (
-            <div style={{display: "flex", "align-items": "center", gap: "8px"}}>
+            <div class="key-display-row">
               <div class="key-display">
                 {(sharedKey() || "----------").split("").map((c) => (
                   <span class="key-char">{c}</span>
@@ -139,29 +158,28 @@ function App() {
               <button class="copy-btn" onClick={() => sharedKey() && navigator.clipboard.writeText(sharedKey()!)}>Copy</button>
             </div>
           )}
-          <div class="row">
+          <div class="row" style={{ "margin-top": "12px" }}>
             <input
               type="number"
               placeholder={`Port (current: ${serverPort()})`}
               value={customPort()}
               onInput={(e) => setCustomPort((e.currentTarget as HTMLInputElement).value)}
-              style={{width: "150px", "margin-right": "0.5rem"}}
             />
-            <button onClick={applyPort} style={{ "margin-right": "0.5rem" }}>Set Port</button>
-            <div style={{ display: "flex", "align-items": "center", "justify-content": "center", gap: "12px" }}>
-            <span>Server</span>
-            <label class="toggle-switch">
-              <input
-                type="checkbox"
-                checked={serverStatus() === "Running"}
-                onChange={toggleServer}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-            <span style={{ color: serverStatus() === "Running" ? "#86efac" : "#f87171", "font-weight": "600" }}>
-              {serverStatus() === "Running" ? "ON" : "OFF"}
-            </span>
-          </div>
+            <button onClick={applyPort}>Set Port</button>
+            <div class="toggle-row">
+              <span>Server</span>
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={serverStatus() === "Running"}
+                  onChange={toggleServer}
+                />
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="status-text" classList={{ on: serverStatus() === "Running", off: serverStatus() !== "Running" }}>
+                {serverStatus() === "Running" ? "ON" : "OFF"}
+              </span>
+            </div>
           </div>
         </div>
 
