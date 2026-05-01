@@ -138,15 +138,7 @@ pub fn handle_request(mut stream: TcpStream) {
                 }
             }
 
-            ("GET", _) if req_path.starts_with("/api/greet") => {
-                let name = params.get("name").map(|s| s.as_str()).unwrap_or("World");
-                let body = rmp_serde::to_vec(&rmpv::Value::Map(vec![(
-                    rmpv::Value::String("message".into()),
-                    rmpv::Value::String(format!("Hello, {}! (from Rust HTTP API)", name).into()),
-                )]))
-                .unwrap();
-                response = utilities::msgpack_response(&body, "200");
-            }
+
             #[cfg(all(feature = "expose_shared_key_api", debug_assertions))]
             ("GET", "/api/shared-key") => {
                 let body = rmp_serde::to_vec(&rmpv::Value::Map(vec![(

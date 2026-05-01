@@ -227,11 +227,17 @@ pub fn handle_files_read(body: &[u8]) -> Vec<u8> {
         validate_path(file_path).map_err(ApiError::from)?;
         let bytes = fs::read(file_path).map_err(|_| ApiError::IoError)?;
         let mime = utilities::determine_mime(file_path);
-        let b64 = utilities::base64_encode(&bytes);
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&bytes).map_err(|_| ApiError::IoError)?;
+        let compressed = encoder.finish().map_err(|_| ApiError::IoError)?;
         let response = Value::Map(vec![
-            (Value::String("content".into()), Value::String(b64.into())),
+            (Value::String("content".into()), Value::Binary(compressed)),
             (Value::String("mime".into()), Value::String(mime.into())),
             (Value::String("binary".into()), Value::Boolean(true)),
+            (
+                Value::String("compression".into()),
+                Value::String("gzip".into()),
+            ),
         ]);
         rmp_serde::to_vec(&response)
             .map_err(|_| ApiError::BadRequest("Serialization failed".to_string()))

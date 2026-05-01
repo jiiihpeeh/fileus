@@ -38,9 +38,10 @@ export interface InfoResponse {
 }
 
 export interface ReadResponse {
-  content: string;
+  content: Uint8Array;
   mime: string;
   binary: true;
+  compression?: string;
 }
 
 export interface SuccessResponse {
@@ -206,13 +207,19 @@ export async function apiList(dir: string): Promise<ListResponse> {
   return encryptedRequest("/api/files/list", { dir });
 }
 
-export async function apiRead(path: string): Promise<ReadResponse> {
+async function decompressGzip(data: Uint8Array): Promise<Uint8Array> {
+  const stream = new Response(data as unknown as BodyInit).body!.pipeThrough(new DecompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+export async function apiRead(path: string): Promise<{ content: string; mime: string; binary: true }> {
   const r = await encryptedRequest<ReadResponse>("/api/files/read", { path });
-  if (r.binary && r.content) {
-    const bytes = Uint8Array.from(atob(r.content), c => c.charCodeAt(0));
-    r.content = new TextDecoder().decode(bytes);
+  let bytes = r.content || new Uint8Array();
+  if (r.compression === "gzip") {
+    bytes = await decompressGzip(bytes);
   }
-  return r;
+  const content = new TextDecoder().decode(bytes);
+  return { mime: r.mime, binary: r.binary, content };
 }
 
 export async function apiInfo(path: string): Promise<InfoResponse> {
